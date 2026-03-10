@@ -1,0 +1,146 @@
+"""Agent orchestrator — manages an agent run lifecycle, SDK-agnostic."""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime
+
+from agentml.agents.backend import AgentBackend
+from agentml.agents.prompts import build_system_prompt
+from agentml.agents.types import (
+    AgentEvent,
+    AgentRun,
+    AgentRunConfig,
+    AgentRunResult,
+    RunStatus,
+    ToolHint,
+)
+from agentml.runtime.lab import LabEnvironment
+from agentml.tools.server import collect_all_tools
+from agentml.utils.ids import generate_id
+from agentml.utils.logging import get_logger
+
+logger = get_logger(__name__)
+
+
+class AgentOrchestrator:
+    """Manages one agent run using a pluggable AgentBackend.
+
+    The orchestrator is responsible for:
+    - Building the AgentRunConfig (system prompt, limits)
+    - Collecting ToolDefs from v1
+    - Passing tools + config to the backend
+    - Driving the execute loop and appending events to AgentRun
+    - Error handling and status transitions
+
+    It does NOT know about Claude, Copilot, or any specific SDK.
+    """
+
+    def __init__(
+        self,
+        lab: LabEnvironment,
+        backend: AgentBackend,
+        *,
+        max_turns: int = 50,
+        max_budget_usd: float | None = None,
+        permission_mode: str = "acceptEdits",
+        cwd: str | None = None,
+    ) -> None:
+        self.lab = lab
+        self.backend = backend
+        self.max_turns = max_turns
+        self.max_budget_usd = max_budget_usd
+        self.permission_mode = permission_mode
+        self.cwd = cwd
+        self._run: AgentRun | None = None
+
+    async def start(
+        self,
+        prompt: str,
+        task_id: str | None = None,
+        tool_hints: list[ToolHint] | None = None,
+    ) -> AgentRun:
+        """Prepare an agent run: create run state, configure backend.
+
+        Does not start execution — call execute() separately
+        (usually in a background task).
+        """
+        run = AgentRun(
+            task_id=task_id or generate_id(),
+            prompt=prompt,
+            status=RunStatus.RUNNING,
+            started_at=datetime.now(UTC),
+            tool_hints=tool_hints or [],
+        )
+        self._run = run
+
+        # Build system prompt
+        system_prompt = build_system_prompt(run)
+
+        # Build config
+        config = AgentRunConfig(
+            system_prompt=system_prompt,
+            max_turns=self.max_turns,
+            max_budget_usd=self.max_budget_usd,
+            permission_mode=self.permission_mode,
+            cwd=self.cwd,
+            task_id=run.task_id,
+        )
+        run.config = config
+
+        # Collect v1 tool definitions (framework-agnostic)
+        tool_defs = collect_all_tools(self.lab)
+
+        # Configure the backend with tools and config
+        await self.backend.configure(tool_defs, config)
+
+        return run
+
+    async def execute(self, run: AgentRun) -> None:
+        """Execute the agent run (blocking). Call in a background task.
+
+        Consumes the event stream from the backend and appends
+        events to run.events. Updates run status on completion.
+        """
+        try:
+            async for event in self.backend.execute(run.prompt):
+                run.events.append(event)
+
+                # Handle the result event
+                if event.event_type == "result":
+                    run.result = _result_from_event(event)
+                    run.status = (
+                        RunStatus.FAILED if event.data.get("is_error") else RunStatus.COMPLETED
+                    )
+
+                # Handle error events
+                if event.event_type == "error":
+                    run.status = RunStatus.FAILED
+                    run.error = event.data.get("error", "Unknown error")
+
+            if run.status == RunStatus.RUNNING:
+                run.status = RunStatus.COMPLETED
+            run.completed_at = datetime.now(UTC)
+
+        except Exception as e:
+            run.status = RunStatus.FAILED
+            run.error = str(e)
+            run.completed_at = datetime.now(UTC)
+            logger.error("agent_run_failed", run_id=run.id, error=str(e))
+
+    async def stop(self) -> None:
+        """Stop the running agent by interrupting the backend."""
+        await self.backend.stop()
+        if self._run:
+            self._run.status = RunStatus.STOPPED
+            self._run.completed_at = datetime.now(UTC)
+
+
+def _result_from_event(event: AgentEvent) -> AgentRunResult:
+    """Extract AgentRunResult from a result event's data dict."""
+    return AgentRunResult(
+        session_id=event.data.get("session_id"),
+        total_cost_usd=event.data.get("cost_usd"),
+        num_turns=event.data.get("turns", 0),
+        duration_ms=event.data.get("duration_ms"),
+        is_error=event.data.get("is_error", False),
+    )

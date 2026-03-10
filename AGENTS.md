@@ -6,12 +6,13 @@
 ## Quick Commands
 
 ```bash
-make dev              # Install all deps (uv sync --all-extras)
-make test             # Run pytest
-make lint             # Ruff check + format check
-make format           # Auto-fix lint + format
-make run              # agentml start (backend + frontend)
-make frontend-install # npm install in frontend/
+just dev              # Install all deps (uv sync --all-extras)
+just test             # Run pytest
+just lint             # Ruff check + format check
+just format           # Auto-fix lint + format
+just run              # agentml start (backend + frontend)
+just run-stub         # Start with stub agent (no API key)
+just frontend-install # npm install in frontend/
 ```
 
 ## Architecture
@@ -86,7 +87,7 @@ YAML at `.agentml/config.yaml`, overridable via env vars (`AGENTML__TRACKING__BA
 ## Testing
 
 ```bash
-make test                          # All tests
+just test                          # All tests
 uv run pytest tests/unit/ -v      # Unit only
 uv run pytest tests/e2e/ -v       # E2E (HTTP lifecycle)
 ```

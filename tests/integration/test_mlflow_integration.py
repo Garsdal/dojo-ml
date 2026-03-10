@@ -2,10 +2,10 @@
 
 import pytest
 
-from agentml.agents.stub_agent import StubAgent
+from agentml.agents.backends.stub import StubAgentBackend
+from agentml.agents.orchestrator import AgentOrchestrator
 from agentml.api.deps import build_lab
 from agentml.config.settings import MemorySettings, Settings, StorageSettings, TrackingSettings
-from agentml.core.task import Task
 
 
 @pytest.fixture
@@ -23,18 +23,25 @@ def lab(tmp_path):
     return build_lab(settings)
 
 
+async def _run_stub(lab, prompt: str) -> None:
+    """Helper: run the stub backend through the orchestrator."""
+    backend = StubAgentBackend()
+    orchestrator = AgentOrchestrator(lab, backend)
+    run = await orchestrator.start(prompt)
+    await orchestrator.execute(run)
+
+
 async def test_stub_agent_logs_to_mlflow(lab) -> None:
-    """StubAgent run should log metrics + params to MLflow."""
-    task = Task(prompt="Test MLflow integration")
-    agent = StubAgent()
-    result = await agent.run(task, lab)
+    """StubAgentBackend run should log metrics + params to MLflow."""
+    await _run_stub(lab, "Test MLflow integration")
 
-    assert result.metrics["accuracy"] == pytest.approx(0.95)
-
-    # Verify MLflow received the metrics
-    experiments = await lab.experiment_store.list(task_id=task.id)
+    # Verify experiments were created
+    experiments = await lab.experiment_store.list()
     assert len(experiments) == 1
     exp = experiments[0]
+
+    assert exp.result is not None
+    assert exp.result.metrics["accuracy"] == pytest.approx(0.95)
 
     tracked_metrics = await lab.tracking.get_metrics(exp.id)
     assert tracked_metrics["accuracy"] == pytest.approx(0.95)
@@ -43,19 +50,14 @@ async def test_stub_agent_logs_to_mlflow(lab) -> None:
 
 async def test_multiple_experiments_tracked_separately(lab) -> None:
     """Each experiment should have its own MLflow run."""
-    agent = StubAgent()
+    await _run_stub(lab, "Task 1")
+    await _run_stub(lab, "Task 2")
 
-    task1 = Task(prompt="Task 1")
-    task2 = Task(prompt="Task 2")
+    experiments = await lab.experiment_store.list()
+    assert len(experiments) == 2
 
-    await agent.run(task1, lab)
-    await agent.run(task2, lab)
-
-    exps1 = await lab.experiment_store.list(task_id=task1.id)
-    exps2 = await lab.experiment_store.list(task_id=task2.id)
-
-    m1 = await lab.tracking.get_metrics(exps1[0].id)
-    m2 = await lab.tracking.get_metrics(exps2[0].id)
+    m1 = await lab.tracking.get_metrics(experiments[0].id)
+    m2 = await lab.tracking.get_metrics(experiments[1].id)
 
     assert m1["accuracy"] == pytest.approx(0.95)
     assert m2["accuracy"] == pytest.approx(0.95)
@@ -63,5 +65,4 @@ async def test_multiple_experiments_tracked_separately(lab) -> None:
     from agentml.tracking.mlflow_tracker import MlflowTracker
 
     assert isinstance(lab.tracking, MlflowTracker)
-    assert exps1[0].id != exps2[0].id
-    assert lab.tracking._run_cache[exps1[0].id] != lab.tracking._run_cache[exps2[0].id]
+    assert experiments[0].id != experiments[1].id

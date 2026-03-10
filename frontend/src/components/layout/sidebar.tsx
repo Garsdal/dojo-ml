@@ -1,5 +1,11 @@
 import { NavLink } from "react-router-dom";
-import { LayoutDashboard, ListTodo, FlaskConical, Brain } from "lucide-react";
+import {
+  LayoutDashboard,
+  ListTodo,
+  FlaskConical,
+  Brain,
+  Bot,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const navItems = [
@@ -7,6 +13,7 @@ const navItems = [
   { to: "/tasks", label: "Tasks", icon: ListTodo },
   { to: "/experiments", label: "Experiments", icon: FlaskConical },
   { to: "/knowledge", label: "Knowledge", icon: Brain },
+  { to: "/agent", label: "Agent", icon: Bot },
 ];
 
 export function Sidebar() {

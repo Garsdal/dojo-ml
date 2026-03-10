@@ -1,40 +1,42 @@
 # End-to-End Agent Harness v2 — Agent Sessions, API & UI
 
-> **Prerequisite:** v1 is complete — AgentML MCP tools exist and work with Claude Agent SDK.
+> **Prerequisite:** v1 is complete — AgentML MCP tools exist as `ToolDef` instances with the `ClaudeToolAdapter`.
 >
-> **Goal:** Wire the agent into the FastAPI backend so users can start, monitor, and stop ML research sessions from the UI.
+> **Goal:** Wire an agent into the FastAPI backend so users can start, monitor, and stop ML research sessions from the UI. The agent backend is abstracted behind an `AgentBackend` interface — swappable between Claude, Copilot, or any future SDK.
 
 ---
 
-## Key Design Principle: Claude Code Does the Heavy Lifting
+## Key Design Principles
 
-From the Claude Agent SDK docs, we use:
+1. **Claude Code does the heavy lifting** — we are a thin orchestration layer
+2. **The agent backend is a port** — `AgentBackend` ABC defines what an agent can do; `ClaudeAgentBackend` is the first adapter
+3. **Mirrors v1's tool adapter pattern** — tools have `ToolDef` → `ToolAdapter`; agent sessions have `AgentBackend` → `ClaudeAgentBackend`
+
+From the Claude Agent SDK docs, the Claude implementation uses:
 
 | SDK Feature | What it gives us | Our usage |
 |---|---|---|
-| `ClaudeSDKClient` | Persistent session, multi-turn conversation, interrupt support | One client per agent run — supports follow-up and stop |
-| `@tool` + `create_sdk_mcp_server()` | Custom MCP tools | Our AgentML tools from v1 |
-| `ClaudeAgentOptions` | System prompt, permissions, max_turns, budget, cwd, hooks | Full agent configuration |
+| `ClaudeSDKClient` | Persistent session, multi-turn, interrupt | One client per agent run |
+| `ClaudeAgentOptions` | System prompt, permissions, budget, hooks | Full agent configuration |
 | Hooks (`PreToolUse`, `PostToolUse`) | Intercept every tool call | Event streaming to UI |
 | `ResultMessage` | Cost, duration, turns, session_id | Run summary & cost tracking |
 | `AssistantMessage` / `ToolUseBlock` | Real-time message stream | Event feed in UI |
-| `include_partial_messages` | Streaming events | Low-latency UI updates |
 | `max_turns` / `max_budget_usd` | Safety limits | Prevent runaway agents |
 | `client.interrupt()` | Stop the agent mid-task | Stop button in UI |
 | Built-in tools (`Bash`, `Write`, etc.) | Code execution, file I/O | Agent writes & runs ML code |
-
-**We are a thin orchestration layer:**
 
 ```
 UI → POST /agent/run → AgentOrchestrator
                             │
                             ├── Build LabEnvironment (existing)
-                            ├── Create AgentML MCP server (v1)
-                            ├── Configure ClaudeSDKClient (system prompt, tools, hooks)
-                            ├── Launch background task
-                            │     └── client.query(prompt) + receive_messages()
+                            ├── Collect AgentML ToolDefs (v1)
+                            ├── Select AgentBackend (from config)
+                            │     ├── ClaudeAgentBackend (claude-agent-sdk)
+                            │     └── (future) CopilotAgentBackend, etc.
+                            ├── backend.start(run) → launch session
+                            ├── backend.execute(run) → stream events
                             ├── Stream events via SSE
-                            └── Support interrupt via client.interrupt()
+                            └── backend.stop() → interrupt
 ```
 
 ---
@@ -42,16 +44,18 @@ UI → POST /agent/run → AgentOrchestrator
 ## Table of Contents
 
 1. [Architecture](#1-architecture)
-2. [Agent Orchestrator](#2-agent-orchestrator)
-3. [System Prompt Design](#3-system-prompt-design)
-4. [API Routes](#4-api-routes)
-5. [Event Streaming](#5-event-streaming)
-6. [Frontend Changes](#6-frontend-changes)
-7. [Configuration](#7-configuration)
-8. [Task-Level Tool Hints](#8-task-level-tool-hints)
-9. [File-by-File Change Map](#9-file-by-file-change-map)
-10. [Implementation Steps](#10-implementation-steps)
-11. [End-to-End Example: Boston Housing](#11-end-to-end-example-boston-housing)
+2. [Agent Backend Abstraction](#2-agent-backend-abstraction)
+3. [Claude Agent Backend](#3-claude-agent-backend)
+4. [Agent Orchestrator](#4-agent-orchestrator)
+5. [System Prompt Design](#5-system-prompt-design)
+6. [API Routes](#6-api-routes)
+7. [Event Streaming](#7-event-streaming)
+8. [Frontend Changes](#8-frontend-changes)
+9. [Configuration](#9-configuration)
+10. [Task-Level Tool Hints](#10-task-level-tool-hints)
+11. [File-by-File Change Map](#11-file-by-file-change-map)
+12. [Implementation Steps](#12-implementation-steps)
+13. [End-to-End Example: Boston Housing](#13-end-to-end-example-boston-housing)
 
 ---
 
@@ -80,19 +84,18 @@ UI → POST /agent/run → AgentOrchestrator
 │  GET  /agent/runs/{id}/events → SSE stream                    │
 │  POST /agent/runs/{id}/stop   → interrupt agent               │
 │                                                               │
-│  AgentOrchestrator (per run)                                  │
-│  ├── ClaudeSDKClient (claude-agent-sdk)                      │
-│  │   ├── system_prompt (AgentML researcher prompt)           │
-│  │   ├── mcp_servers: {"agentml": our_server}                │
-│  │   ├── allowed_tools: [AgentML + Bash + Read + Write]      │
-│  │   ├── hooks: {PreToolUse: [logger], PostToolUse: [logger]}│
-│  │   ├── permission_mode: "acceptEdits"                      │
-│  │   ├── max_turns: 50                                        │
-│  │   ├── max_budget_usd: 1.00                                │
-│  │   └── cwd: sandbox working directory                      │
+│  AgentOrchestrator (per run) — SDK-agnostic                   │
+│  ├── AgentBackend (interface / port)                         │
+│  │   ├── ClaudeAgentBackend (claude-agent-sdk)               │
+│  │   │   ├── Uses ClaudeToolAdapter to adapt ToolDefs        │
+│  │   │   ├── ClaudeSDKClient for session management          │
+│  │   │   └── Claude-specific message → AgentEvent mapping    │
+│  │   └── (future) CopilotAgentBackend, etc.                  │
+│  ├── ToolDefs from v1 (framework-agnostic)                   │
+│  ├── System prompt builder                                    │
 │  └── Event buffer → SSE endpoints                             │
 │                                                               │
-│  LabEnvironment (unchanged from v1)                           │
+│  LabEnvironment (unchanged)                                   │
 │  ├── experiment_store                                         │
 │  ├── memory_store                                             │
 │  ├── tracking                                                 │
@@ -100,41 +103,48 @@ UI → POST /agent/run → AgentOrchestrator
 └───────────────────────────────────────────────────────────────┘
 ```
 
+### Layering: v1 Tools + v2 Agent Backend
+
+```
+                         ┌─────────────────────┐
+                         │  AgentOrchestrator   │  SDK-agnostic
+                         │  (lifecycle, events) │
+                         └──────────┬──────────┘
+                                    │ uses
+              ┌─────────────────────┼─────────────────────┐
+              │                     │                     │
+     ┌────────▼────────┐  ┌────────▼────────┐   ┌────────▼────────┐
+     │  AgentBackend    │  │  ToolDef[]      │   │  System Prompt  │
+     │  (ABC / port)    │  │  (from v1)      │   │  (from prompts) │
+     └────────┬─────────┘  └────────┬────────┘   └─────────────────┘
+              │                     │
+   ┌──────────▼──────────┐  ┌──────▼──────────┐
+   │ ClaudeAgentBackend  │  │ ClaudeToolAdapter│   (Both in adapters/)
+   │ (ClaudeSDKClient)   │  │ (@tool + MCP)   │
+   └─────────────────────┘  └─────────────────┘
+```
+
 ---
 
-## 2. Agent Orchestrator
+## 2. Agent Backend Abstraction
 
-**File:** `src/agentml/agents/orchestrator.py`
+The `AgentBackend` ABC defines the interface for launching, executing, and stopping an agent session. It knows nothing about Claude, Copilot, or any specific SDK.
 
-The orchestrator manages a single agent run's lifecycle. It's not an "agent" itself — it wraps `ClaudeSDKClient`.
+### 2.1 Domain Types (shared, SDK-agnostic)
+
+**File:** `src/agentml/agents/types.py`
 
 ```python
-"""Agent orchestrator — manages a Claude Code session for an AgentML task."""
+"""Shared types for agent sessions — SDK-agnostic."""
 
-import asyncio
-import json
-from collections.abc import AsyncIterator
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
-from claude_agent_sdk import (
-    AssistantMessage,
-    ClaudeAgentOptions,
-    ClaudeSDKClient,
-    ResultMessage,
-    TextBlock,
-    ToolResultBlock,
-    ToolUseBlock,
-)
-
-from agentml.runtime.lab import LabEnvironment
-from agentml.tools.server import create_agentml_server
 from agentml.utils.ids import generate_id
-from agentml.utils.logging import get_logger
-
-logger = get_logger(__name__)
 
 
 class RunStatus(str, Enum):
@@ -147,16 +157,52 @@ class RunStatus(str, Enum):
 
 @dataclass
 class AgentEvent:
-    """A single event in the agent run timeline."""
+    """A single event in the agent run timeline.
+
+    All backends emit events in this common format. The orchestrator and
+    SSE layer only deal with AgentEvent — never SDK-specific message types.
+    """
+
     id: str = field(default_factory=generate_id)
     timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
-    event_type: str = ""           # tool_call, tool_result, text, error, status_change
+    event_type: str = ""  # tool_call, tool_result, text, error, status_change, result
     data: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
+class AgentRunConfig:
+    """Configuration for a single agent run — passed to AgentBackend.start().
+
+    Framework-agnostic. Each backend interprets these fields in its own way.
+    """
+
+    system_prompt: str = ""
+    max_turns: int = 50
+    max_budget_usd: float | None = None
+    permission_mode: str = "acceptEdits"
+    cwd: str | None = None
+
+
+@dataclass
+class AgentRunResult:
+    """Summary returned by AgentBackend.execute() when the run completes.
+
+    Backends populate whichever fields they support. Fields that don't apply
+    to a given backend are left as None / 0.
+    """
+
+    session_id: str | None = None
+    total_cost_usd: float | None = None
+    num_turns: int = 0
+    duration_ms: int | None = None
+    is_error: bool = False
+    error_message: str | None = None
+
+
+@dataclass
 class AgentRun:
-    """State of a single agent run."""
+    """Full state of a single agent run — managed by the orchestrator."""
+
     id: str = field(default_factory=generate_id)
     task_id: str = ""
     prompt: str = ""
@@ -164,64 +210,398 @@ class AgentRun:
     events: list[AgentEvent] = field(default_factory=list)
     started_at: datetime | None = None
     completed_at: datetime | None = None
-    session_id: str | None = None
-    total_cost_usd: float | None = None
-    num_turns: int = 0
+    config: AgentRunConfig = field(default_factory=AgentRunConfig)
+    result: AgentRunResult | None = None
     error: str | None = None
+```
+
+### 2.2 AgentBackend ABC
+
+**File:** `src/agentml/agents/backend.py`
+
+```python
+"""Agent backend interface — the port for agent session execution."""
+
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from collections.abc import AsyncIterator
+
+from agentml.agents.types import AgentEvent, AgentRunConfig, AgentRunResult
+from agentml.tools.base import ToolDef
 
 
-# All allowed AgentML tools (prefixed for MCP)
-AGENTML_TOOLS = [
-    "mcp__agentml__create_experiment",
-    "mcp__agentml__complete_experiment",
-    "mcp__agentml__fail_experiment",
-    "mcp__agentml__get_experiment",
-    "mcp__agentml__list_experiments",
-    "mcp__agentml__compare_experiments",
-    "mcp__agentml__write_knowledge",
-    "mcp__agentml__search_knowledge",
-    "mcp__agentml__list_knowledge",
-    "mcp__agentml__log_metrics",
-    "mcp__agentml__log_params",
-]
+class AgentBackend(ABC):
+    """Abstract interface for running an agent session.
+
+    Each concrete backend (Claude, Copilot, etc.) implements this interface.
+    The AgentOrchestrator delegates all SDK-specific logic here.
+
+    Lifecycle:
+        1. configure() — set up the backend with tools, prompt, and config
+        2. execute()   — run the agent; yields AgentEvents as they happen
+        3. stop()      — interrupt a running session (if supported)
+    """
+
+    @abstractmethod
+    async def configure(
+        self,
+        tool_defs: list[ToolDef],
+        config: AgentRunConfig,
+    ) -> None:
+        """Configure the backend for a run.
+
+        This is called once before execute(). The backend should:
+        - Adapt tool_defs to its SDK format (using the appropriate ToolAdapter)
+        - Build any SDK-specific client/session configuration
+        - Prepare to accept a prompt via execute()
+
+        Args:
+            tool_defs: Framework-agnostic tool definitions from v1.
+            config: Run configuration (system prompt, limits, etc.).
+        """
+        ...
+
+    @abstractmethod
+    async def execute(self, prompt: str) -> AsyncIterator[AgentEvent]:
+        """Execute the agent with the given prompt.
+
+        Yields AgentEvent instances as the agent works. The orchestrator
+        appends these to AgentRun.events and streams them via SSE.
+
+        When the agent finishes (or errors), should yield a final event
+        with event_type="result" containing the AgentRunResult as data.
+
+        Args:
+            prompt: The user's research prompt.
+
+        Yields:
+            AgentEvent instances (tool_call, tool_result, text, result, etc.)
+        """
+        ...
+
+    @abstractmethod
+    async def stop(self) -> None:
+        """Interrupt a running agent session.
+
+        Should be safe to call even if the agent has already stopped.
+        """
+        ...
+
+    @property
+    def name(self) -> str:
+        """Human-readable backend name (e.g. 'claude', 'copilot')."""
+        return self.__class__.__name__
+```
+
+### 2.3 Why This Design
+
+| Concern | How it's handled |
+|---|---|
+| **SDK independence** | `AgentOrchestrator` only sees `AgentBackend` — never imports `claude_agent_sdk` |
+| **Testability** | Tests can use a `StubAgentBackend` that yields canned events — no real SDK needed |
+| **Swappability** | Config sets `agent.backend = "copilot"` → different backend, same orchestrator |
+| **Event normalization** | All backends emit `AgentEvent` — SSE layer and frontend don't care which SDK ran |
+| **Tool reuse** | Backends receive `list[ToolDef]` from v1 — each adapts tools using its own `ToolAdapter` |
+
+### 2.4 Relationship to Existing `Agent` Interface
+
+The existing `src/agentml/interfaces/agent.py` defines an `Agent` ABC with `run(task, lab)`. This was designed for the `StubAgent` pattern (synchronous task execution). 
+
+`AgentBackend` is a **different abstraction** — it manages an interactive, streaming session with an external AI agent. The two could eventually be unified, but for v2 we keep them separate:
+
+- `Agent` → "run a task and return results" (batch, internal)
+- `AgentBackend` → "launch a streaming AI session with tools" (interactive, external)
+
+---
+
+## 3. Claude Agent Backend
+
+**File:** `src/agentml/agents/backends/claude.py`
+
+This is the first (and for now only) concrete implementation of `AgentBackend`.
+
+```python
+"""Claude Agent SDK backend — runs agent sessions via ClaudeSDKClient."""
+
+from __future__ import annotations
+
+import json
+from collections.abc import AsyncIterator
+from typing import Any
+
+from claude_agent_sdk import (
+    AssistantMessage,
+    ClaudeAgentOptions,
+    ClaudeSDKClient,
+    HookContext,
+    HookMatcher,
+    ResultMessage,
+    TextBlock,
+    ToolResultBlock,
+    ToolUseBlock,
+)
+
+from agentml.agents.backend import AgentBackend
+from agentml.agents.types import AgentEvent, AgentRunConfig, AgentRunResult
+from agentml.tools.adapters.claude import ClaudeToolAdapter
+from agentml.tools.base import ToolDef
+from agentml.utils.logging import get_logger
+
+logger = get_logger(__name__)
 
 # Claude Code built-in tools the agent may use
 BUILTIN_TOOLS = ["Bash", "Read", "Write", "Edit", "WebFetch"]
 
 
+class ClaudeAgentBackend(AgentBackend):
+    """Runs an agent session using the Claude Agent SDK.
+
+    Uses ClaudeToolAdapter from v1 to convert ToolDefs → Claude MCP tools.
+    Uses ClaudeSDKClient for session management, streaming, and interruption.
+    """
+
+    def __init__(self) -> None:
+        self._client: ClaudeSDKClient | None = None
+        self._options: ClaudeAgentOptions | None = None
+        self._tool_adapter = ClaudeToolAdapter()
+        self._tool_defs: list[ToolDef] = []
+
+    async def configure(
+        self,
+        tool_defs: list[ToolDef],
+        config: AgentRunConfig,
+    ) -> None:
+        """Configure the Claude agent session.
+
+        Converts ToolDefs to Claude format via ClaudeToolAdapter,
+        builds ClaudeAgentOptions with the system prompt and limits.
+        """
+        self._tool_defs = tool_defs
+
+        # Use the v1 ClaudeToolAdapter to create the MCP server
+        server = self._tool_adapter.create_server("agentml", tool_defs)
+        allowed_agentml = self._tool_adapter.tool_names_prefixed("agentml", tool_defs)
+
+        self._options = ClaudeAgentOptions(
+            mcp_servers={"agentml": server},
+            allowed_tools=[*allowed_agentml, *BUILTIN_TOOLS],
+            system_prompt=config.system_prompt,
+            permission_mode=config.permission_mode,
+            max_turns=config.max_turns,
+            max_budget_usd=config.max_budget_usd,
+            cwd=config.cwd,
+        )
+
+        self._client = ClaudeSDKClient(options=self._options)
+
+    async def execute(self, prompt: str) -> AsyncIterator[AgentEvent]:
+        """Execute the agent run, yielding events as they arrive."""
+        if not self._client:
+            msg = "Backend not configured — call configure() first"
+            raise RuntimeError(msg)
+
+        try:
+            async with self._client as client:
+                await client.query(prompt)
+
+                async for message in client.receive_response():
+                    events = self._message_to_events(message)
+                    for event in events:
+                        yield event
+
+                    # If this is the result message, yield the summary event
+                    if isinstance(message, ResultMessage):
+                        yield AgentEvent(
+                            event_type="result",
+                            data={
+                                "session_id": message.session_id,
+                                "turns": message.num_turns,
+                                "cost_usd": message.total_cost_usd,
+                                "duration_ms": message.duration_ms,
+                                "is_error": message.is_error,
+                            },
+                        )
+
+        except Exception as e:
+            logger.error("claude_backend_error", error=str(e))
+            yield AgentEvent(
+                event_type="error",
+                data={"error": str(e)},
+            )
+
+    async def stop(self) -> None:
+        """Interrupt the Claude agent session."""
+        if self._client:
+            await self._client.interrupt()
+
+    @property
+    def name(self) -> str:
+        return "claude"
+
+    # --- Private helpers ---
+
+    def _message_to_events(self, message: Any) -> list[AgentEvent]:
+        """Convert a Claude SDK message to AgentEvent(s).
+
+        A single AssistantMessage may contain multiple content blocks,
+        so we return a list.
+        """
+        events: list[AgentEvent] = []
+
+        if isinstance(message, AssistantMessage):
+            for block in message.content:
+                if isinstance(block, ToolUseBlock):
+                    events.append(AgentEvent(
+                        event_type="tool_call",
+                        data={"tool": block.name, "input": block.input},
+                    ))
+                elif isinstance(block, ToolResultBlock):
+                    events.append(AgentEvent(
+                        event_type="tool_result",
+                        data={
+                            "tool_use_id": block.tool_use_id,
+                            "content": block.content,
+                        },
+                    ))
+                elif isinstance(block, TextBlock):
+                    events.append(AgentEvent(
+                        event_type="text",
+                        data={"text": block.text},
+                    ))
+
+        return events
+```
+
+### 3.1 Optional: Hooks for Richer Events
+
+Using Claude Agent SDK hooks, we can capture events before/after every tool call:
+
+```python
+# Inside ClaudeAgentBackend.configure(), add hooks to options:
+
+async def pre_tool_hook(
+    input_data: dict, tool_use_id: str | None, context: HookContext
+) -> dict:
+    """Capture pre-tool events for the event buffer."""
+    # Events are yielded via the message stream, but hooks can add
+    # richer context (e.g. tool_starting with timing info)
+    return {}  # Don't modify the tool call
+
+async def post_tool_hook(
+    input_data: dict, tool_use_id: str | None, context: HookContext
+) -> dict:
+    """Capture post-tool events."""
+    return {}
+
+# Add to ClaudeAgentOptions:
+self._options.hooks = {
+    "PreToolUse": [HookMatcher(hooks=[pre_tool_hook])],
+    "PostToolUse": [HookMatcher(hooks=[post_tool_hook])],
+}
+```
+
+### 3.2 Future Backends (sketch, not built in v2)
+
+```python
+# Copilot Agent Backend (future)
+class CopilotAgentBackend(AgentBackend):
+    def __init__(self) -> None:
+        self._tool_adapter = CopilotToolAdapter()  # from v1 adapters
+
+    async def configure(self, tool_defs, config) -> None:
+        # Convert tools using CopilotToolAdapter
+        # Build Copilot-specific session config
+        ...
+
+    async def execute(self, prompt: str) -> AsyncIterator[AgentEvent]:
+        # Run Copilot session, yield normalized AgentEvents
+        ...
+
+    async def stop(self) -> None:
+        # Copilot-specific interruption
+        ...
+
+# Stub backend for testing (no real SDK)
+class StubAgentBackend(AgentBackend):
+    """Yields canned events — useful for UI development and testing."""
+
+    def __init__(self, events: list[AgentEvent] | None = None) -> None:
+        self._events = events or []
+
+    async def configure(self, tool_defs, config) -> None:
+        pass  # Nothing to configure
+
+    async def execute(self, prompt: str) -> AsyncIterator[AgentEvent]:
+        for event in self._events:
+            yield event
+
+    async def stop(self) -> None:
+        pass  # Nothing to stop
+```
+
+---
+
+## 4. Agent Orchestrator
+
+**File:** `src/agentml/agents/orchestrator.py`
+
+The orchestrator manages a single agent run's lifecycle. It delegates all SDK-specific work to the `AgentBackend`. It never imports `claude_agent_sdk`.
+
+```python
+"""Agent orchestrator — manages an agent run lifecycle, SDK-agnostic."""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime
+
+from agentml.agents.backend import AgentBackend
+from agentml.agents.prompts import build_system_prompt
+from agentml.agents.types import AgentEvent, AgentRun, AgentRunConfig, RunStatus
+from agentml.runtime.lab import LabEnvironment
+from agentml.tools.server import collect_all_tools
+from agentml.utils.ids import generate_id
+from agentml.utils.logging import get_logger
+
+logger = get_logger(__name__)
+
+
 class AgentOrchestrator:
-    """Manages one agent run using ClaudeSDKClient."""
+    """Manages one agent run using a pluggable AgentBackend.
+
+    The orchestrator is responsible for:
+    - Building the AgentRunConfig (system prompt, limits)
+    - Collecting ToolDefs from v1
+    - Passing tools + config to the backend
+    - Driving the execute loop and appending events to AgentRun
+    - Error handling and status transitions
+
+    It does NOT know about Claude, Copilot, or any specific SDK.
+    """
 
     def __init__(
         self,
         lab: LabEnvironment,
+        backend: AgentBackend,
         *,
         max_turns: int = 50,
         max_budget_usd: float | None = None,
+        permission_mode: str = "acceptEdits",
         cwd: str | None = None,
     ) -> None:
         self.lab = lab
+        self.backend = backend
         self.max_turns = max_turns
         self.max_budget_usd = max_budget_usd
+        self.permission_mode = permission_mode
         self.cwd = cwd
-        self._client: ClaudeSDKClient | None = None
         self._run: AgentRun | None = None
 
-    def _build_options(self, run: AgentRun) -> ClaudeAgentOptions:
-        """Build ClaudeAgentOptions for this run."""
-        server = create_agentml_server(self.lab)
-        return ClaudeAgentOptions(
-            mcp_servers={"agentml": server},
-            allowed_tools=[*AGENTML_TOOLS, *BUILTIN_TOOLS],
-            system_prompt=build_system_prompt(run),
-            permission_mode="acceptEdits",
-            max_turns=self.max_turns,
-            max_budget_usd=self.max_budget_usd,
-            cwd=self.cwd,
-        )
-
     async def start(self, prompt: str, task_id: str | None = None) -> AgentRun:
-        """Start an agent run. Returns the AgentRun (events stream in background)."""
+        """Prepare an agent run: create run state, configure backend.
+
+        Does not start execution — call execute() separately (usually in a background task).
+        """
         run = AgentRun(
             task_id=task_id or generate_id(),
             prompt=prompt,
@@ -230,29 +610,48 @@ class AgentOrchestrator:
         )
         self._run = run
 
-        options = self._build_options(run)
-        self._client = ClaudeSDKClient(options=options)
+        # Build system prompt
+        system_prompt = build_system_prompt(run)
+
+        # Build config
+        config = AgentRunConfig(
+            system_prompt=system_prompt,
+            max_turns=self.max_turns,
+            max_budget_usd=self.max_budget_usd,
+            permission_mode=self.permission_mode,
+            cwd=self.cwd,
+        )
+        run.config = config
+
+        # Collect v1 tool definitions (framework-agnostic)
+        tool_defs = collect_all_tools(self.lab)
+
+        # Configure the backend with tools and config
+        await self.backend.configure(tool_defs, config)
 
         return run
 
     async def execute(self, run: AgentRun) -> None:
-        """Execute the agent run (blocking). Call in a background task."""
+        """Execute the agent run (blocking). Call in a background task.
+
+        Consumes the event stream from the backend and appends
+        events to run.events. Updates run status on completion.
+        """
         try:
-            async with self._client as client:
-                await client.query(run.prompt)
+            async for event in self.backend.execute(run.prompt):
+                run.events.append(event)
 
-                async for message in client.receive_response():
-                    event = self._message_to_event(message)
-                    if event:
-                        run.events.append(event)
+                # Handle the result event
+                if event.event_type == "result":
+                    run.result = _result_from_event(event)
+                    run.status = (
+                        RunStatus.FAILED if event.data.get("is_error") else RunStatus.COMPLETED
+                    )
 
-                    if isinstance(message, ResultMessage):
-                        run.session_id = message.session_id
-                        run.total_cost_usd = message.total_cost_usd
-                        run.num_turns = message.num_turns
-                        run.status = (
-                            RunStatus.FAILED if message.is_error else RunStatus.COMPLETED
-                        )
+                # Handle error events
+                if event.event_type == "error":
+                    run.status = RunStatus.FAILED
+                    run.error = event.data.get("error", "Unknown error")
 
             run.completed_at = datetime.now(UTC)
 
@@ -263,62 +662,88 @@ class AgentOrchestrator:
             logger.error("agent_run_failed", run_id=run.id, error=str(e))
 
     async def stop(self) -> None:
-        """Interrupt the running agent."""
-        if self._client:
-            await self._client.interrupt()
-            if self._run:
-                self._run.status = RunStatus.STOPPED
-                self._run.completed_at = datetime.now(UTC)
+        """Stop the running agent by interrupting the backend."""
+        await self.backend.stop()
+        if self._run:
+            self._run.status = RunStatus.STOPPED
+            self._run.completed_at = datetime.now(UTC)
 
-    def _message_to_event(self, message: Any) -> AgentEvent | None:
-        """Convert a Claude SDK message to an AgentEvent."""
-        if isinstance(message, AssistantMessage):
-            for block in message.content:
-                if isinstance(block, ToolUseBlock):
-                    return AgentEvent(
-                        event_type="tool_call",
-                        data={"tool": block.name, "input": block.input},
-                    )
-                if isinstance(block, ToolResultBlock):
-                    return AgentEvent(
-                        event_type="tool_result",
-                        data={"tool_use_id": block.tool_use_id, "content": block.content},
-                    )
-                if isinstance(block, TextBlock):
-                    return AgentEvent(
-                        event_type="text",
-                        data={"text": block.text},
-                    )
-        if isinstance(message, ResultMessage):
-            return AgentEvent(
-                event_type="result",
-                data={
-                    "session_id": message.session_id,
-                    "turns": message.num_turns,
-                    "cost_usd": message.total_cost_usd,
-                    "duration_ms": message.duration_ms,
-                    "is_error": message.is_error,
-                },
-            )
-        return None
+
+def _result_from_event(event: AgentEvent) -> "AgentRunResult":
+    """Extract AgentRunResult from a result event's data dict."""
+    from agentml.agents.types import AgentRunResult
+
+    return AgentRunResult(
+        session_id=event.data.get("session_id"),
+        total_cost_usd=event.data.get("cost_usd"),
+        num_turns=event.data.get("turns", 0),
+        duration_ms=event.data.get("duration_ms"),
+        is_error=event.data.get("is_error", False),
+    )
+```
+
+### 4.1 Backend Factory
+
+**File:** `src/agentml/agents/factory.py`
+
+Dispatches on the configured backend name to create the right `AgentBackend` instance.
+
+```python
+"""Agent backend factory — creates the right backend from config."""
+
+from __future__ import annotations
+
+from agentml.agents.backend import AgentBackend
+
+
+def create_agent_backend(backend: str = "claude") -> AgentBackend:
+    """Create an AgentBackend instance by name.
+
+    Args:
+        backend: Backend identifier ("claude", "stub", etc.)
+
+    Returns:
+        A configured AgentBackend instance.
+
+    Raises:
+        ValueError: If the backend name is unknown.
+    """
+    if backend == "claude":
+        from agentml.agents.backends.claude import ClaudeAgentBackend
+
+        return ClaudeAgentBackend()
+
+    if backend == "stub":
+        from agentml.agents.backends.stub import StubAgentBackend
+
+        return StubAgentBackend()
+
+    msg = f"Unknown agent backend: {backend}"
+    raise ValueError(msg)
 ```
 
 ---
 
-## 3. System Prompt Design
+## 5. System Prompt Design
 
 **File:** `src/agentml/agents/prompts.py`
+
+Unchanged from the original — system prompts are SDK-agnostic by nature.
 
 ```python
 """System prompt templates for AgentML agent sessions."""
 
-from agentml.agents.orchestrator import AgentRun
+from agentml.agents.types import AgentRun
 
 
 def build_system_prompt(run: AgentRun) -> str:
-    """Build the system prompt for a Claude Code agent session."""
+    """Build the system prompt for an agent session.
+
+    This prompt is backend-agnostic — it describes the AgentML tools
+    and workflow, not any specific SDK features.
+    """
     hints_section = ""
-    # Tool hints would be injected here (see section 8)
+    # Tool hints would be injected here (see section 10)
 
     return f"""You are an autonomous ML research agent operating within AgentML.
 
@@ -346,15 +771,15 @@ These tools manage experiments and knowledge in AgentML's platform:
 - **list_knowledge** — Review all recorded knowledge
 
 ## Code execution
-You also have Bash, Read, Write, and Edit tools from Claude Code.
-Use Bash to run Python scripts for training, evaluation, etc.
+You have tools for running code, reading/writing files, and fetching web content.
+Use them to run Python scripts for training, evaluation, etc.
 
 ## Workflow
 1. **Search knowledge** first — have we learned anything about this problem before?
 2. **Plan** your experimental approach (models, features, hyperparameters)
 3. For each experiment:
    a. Call `create_experiment` with a clear hypothesis
-   b. Write and run code with Bash (install packages as needed)
+   b. Write and run code (install packages as needed)
    c. Parse the metrics from stdout
    d. Call `log_metrics` then `complete_experiment` (or `fail_experiment`)
    e. Call `write_knowledge` with what you learned
@@ -374,20 +799,25 @@ Use Bash to run Python scripts for training, evaluation, etc.
 
 ---
 
-## 4. API Routes
+## 6. API Routes
 
 **File:** `src/agentml/api/routers/agent.py`
+
+Updated to use the backend factory. The router creates an `AgentOrchestrator` with whichever `AgentBackend` is configured.
 
 ```python
 """Agent router — start, monitor, and stop agent research sessions."""
 
 import asyncio
+import json
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from agentml.agents.orchestrator import AgentOrchestrator, AgentRun, RunStatus
+from agentml.agents.factory import create_agent_backend
+from agentml.agents.orchestrator import AgentOrchestrator
+from agentml.agents.types import AgentRun, RunStatus
 from agentml.runtime.lab import LabEnvironment
 
 router = APIRouter(prefix="/agent", tags=["agent"])
@@ -442,10 +872,16 @@ async def start_run(body: StartRunRequest, request: Request) -> AgentRunResponse
     lab = _get_lab(request)
     settings = request.app.state.settings
 
+    # Create the backend from config (e.g. "claude", "stub")
+    backend = create_agent_backend(settings.agent.backend)
+
     orchestrator = AgentOrchestrator(
         lab,
+        backend,
         max_turns=body.max_turns,
         max_budget_usd=body.max_budget_usd,
+        permission_mode=settings.agent.permission_mode,
+        cwd=settings.agent.cwd,
     )
 
     run = await orchestrator.start(prompt=body.prompt)
@@ -470,7 +906,6 @@ async def get_run(run_id: str) -> AgentRunResponse:
     """Get agent run status and events."""
     run = _runs.get(run_id)
     if not run:
-        from fastapi import HTTPException
         raise HTTPException(404, f"Run {run_id} not found")
     return _to_response(run)
 
@@ -480,7 +915,6 @@ async def stop_run(run_id: str) -> dict:
     """Stop a running agent."""
     orchestrator = _orchestrators.get(run_id)
     if not orchestrator:
-        from fastapi import HTTPException
         raise HTTPException(404, f"Run {run_id} not found")
     await orchestrator.stop()
     return {"status": "stopped"}
@@ -495,7 +929,6 @@ async def stream_events(run_id: str, request: Request):
 
     run = _runs.get(run_id)
     if not run:
-        from fastapi import HTTPException
         raise HTTPException(404, f"Run {run_id} not found")
 
     async def event_generator():
@@ -549,8 +982,8 @@ def _to_response(run: AgentRun) -> AgentRunResponse:
         ],
         started_at=run.started_at.isoformat() if run.started_at else None,
         completed_at=run.completed_at.isoformat() if run.completed_at else None,
-        total_cost_usd=run.total_cost_usd,
-        num_turns=run.num_turns,
+        total_cost_usd=run.result.total_cost_usd if run.result else None,
+        num_turns=run.result.num_turns if run.result else 0,
         error=run.error,
     )
 ```
@@ -565,70 +998,36 @@ app.include_router(agent.router)
 
 ---
 
-## 5. Event Streaming
+## 7. Event Streaming
 
-### How events flow
+### How events flow (backend-agnostic)
 
 ```
-ClaudeSDKClient.receive_response()
+AgentBackend.execute(prompt)
     │
-    ├── AssistantMessage(ToolUseBlock)  →  AgentEvent("tool_call", {tool, input})
-    ├── AssistantMessage(ToolResultBlock) →  AgentEvent("tool_result", {output})
-    ├── AssistantMessage(TextBlock)     →  AgentEvent("text", {text})
-    └── ResultMessage                   →  AgentEvent("result", {cost, turns, ...})
+    │  yields AgentEvent instances
+    │  (normalized — same format regardless of backend)
     │
-    ▼  Appended to run.events[]
+    ├── AgentEvent("tool_call", {tool, input})
+    ├── AgentEvent("tool_result", {output})
+    ├── AgentEvent("text", {text})
+    ├── AgentEvent("error", {error})
+    └── AgentEvent("result", {cost, turns, ...})
+    │
+    ▼  AgentOrchestrator.execute() appends to run.events[]
     │
     ▼  SSE endpoint polls run.events[]
     │
     ▼  Frontend EventSource receives events
 ```
 
-### Optional: Hooks for richer events
-
-Using Claude Agent SDK hooks, we can capture events before/after every tool call with richer context:
-
-```python
-from claude_agent_sdk import HookMatcher, HookContext
-
-async def pre_tool_hook(
-    input_data: dict, tool_use_id: str | None, context: HookContext
-) -> dict:
-    """Capture tool call events for the UI."""
-    run.events.append(AgentEvent(
-        event_type="tool_starting",
-        data={
-            "tool": input_data.get("tool_name"),
-            "input": input_data.get("tool_input"),
-        },
-    ))
-    return {}  # Don't modify the tool call
-
-async def post_tool_hook(
-    input_data: dict, tool_use_id: str | None, context: HookContext
-) -> dict:
-    """Capture tool results for the UI."""
-    run.events.append(AgentEvent(
-        event_type="tool_completed",
-        data={
-            "tool": input_data.get("tool_name"),
-            "response": str(input_data.get("tool_response", ""))[:500],
-        },
-    ))
-    return {}
-
-# Add to ClaudeAgentOptions:
-hooks={
-    "PreToolUse": [HookMatcher(hooks=[pre_tool_hook])],
-    "PostToolUse": [HookMatcher(hooks=[post_tool_hook])],
-}
-```
+The key improvement: the SSE layer and frontend only deal with `AgentEvent` — they never see SDK-specific types. Adding a new backend doesn't require any changes to the event streaming pipeline.
 
 ---
 
-## 6. Frontend Changes
+## 8. Frontend Changes
 
-### 6.1 New types
+### 8.1 New types
 
 **File:** `frontend/src/types.ts` — add:
 
@@ -661,7 +1060,7 @@ export interface ToolHint {
 }
 ```
 
-### 6.2 New hooks
+### 8.2 New hooks
 
 **File:** `frontend/src/hooks/use-agent.ts`
 
@@ -742,7 +1141,7 @@ export function useAgentEvents(runId: string | undefined) {
 }
 ```
 
-### 6.3 Agent page
+### 8.3 Agent page
 
 **File:** `frontend/src/pages/agent.tsx`
 
@@ -788,7 +1187,7 @@ Layout:
 └──────────────────────────────────────────────┘
 ```
 
-### 6.4 Route addition
+### 8.4 Route addition
 
 ```tsx
 // App.tsx — add:
@@ -797,13 +1196,13 @@ import AgentPage from "@/pages/agent";
 <Route path="agent" element={<AgentPage />} />
 ```
 
-### 6.5 Nav item
+### 8.5 Nav item
 
 Add "Agent" link in `frontend/src/components/layout/shell.tsx` nav.
 
 ---
 
-## 7. Configuration
+## 9. Configuration
 
 ### Settings additions
 
@@ -812,9 +1211,10 @@ Add "Agent" link in `frontend/src/components/layout/shell.tsx` nav.
 ```python
 class AgentSettings(BaseSettings):
     """Agent execution configuration."""
+    backend: str = "claude"              # Which AgentBackend to use
     max_turns: int = 50                  # Max tool-use round trips
     max_budget_usd: float | None = None  # Max spend per run (None = unlimited)
-    permission_mode: str = "acceptEdits" # Claude Code permission mode
+    permission_mode: str = "acceptEdits" # Permission mode (backend-specific)
     cwd: str | None = None               # Working directory for code execution
 
 class Settings(BaseSettings):
@@ -825,13 +1225,14 @@ class Settings(BaseSettings):
 ### Environment variables
 
 ```bash
+AGENTML__AGENT__BACKEND=claude
 AGENTML__AGENT__MAX_TURNS=100
 AGENTML__AGENT__MAX_BUDGET_USD=5.00
 ```
 
 ---
 
-## 8. Task-Level Tool Hints
+## 10. Task-Level Tool Hints
 
 Tool hints let users tell the agent about data sources or domain-specific tools it should create.
 
@@ -839,10 +1240,10 @@ Tool hints let users tell the agent about data sources or domain-specific tools 
 
 1. User submits hints via the UI (name, description, source URL)
 2. Hints are injected into the system prompt as instructions
-3. Claude Code uses `WebFetch` to read the source, then `Bash` to write/test a loader
+3. The agent uses its built-in tools to read the source and write loader code
 4. The agent naturally creates reusable code — no dynamic MCP tool creation needed
 
-This is the key simplification: **Claude Code can already read URLs and write code.** We don't need a `create_tool` meta-tool. We just need to tell the agent about the data sources in the prompt.
+This is the key simplification: **the agent SDK can already read URLs and write code.** We don't need a `create_tool` meta-tool. We just need to tell the agent about the data sources in the prompt.
 
 ### System prompt injection
 
@@ -856,19 +1257,25 @@ if run.tool_hints:
         hints += f"  Source: {h.source}\n"
         if h.code_template:
             hints += f"  Starter code:\n```python\n{h.code_template}\n```\n"
-    hints += "\nUse WebFetch to read these sources if needed, then write appropriate data loading code.\n"
+    hints += "\nFetch these sources if needed, then write appropriate data loading code.\n"
 ```
 
 ---
 
-## 9. File-by-File Change Map
+## 11. File-by-File Change Map
 
 ### New files
 
 | File | Purpose |
 |---|---|
-| `src/agentml/agents/orchestrator.py` | `AgentOrchestrator`, `AgentRun`, `AgentEvent` |
+| `src/agentml/agents/types.py` | `AgentRun`, `AgentEvent`, `AgentRunConfig`, `AgentRunResult`, `RunStatus` |
+| `src/agentml/agents/backend.py` | `AgentBackend` ABC (the port) |
+| `src/agentml/agents/factory.py` | `create_agent_backend()` factory function |
+| `src/agentml/agents/orchestrator.py` | `AgentOrchestrator` (SDK-agnostic) |
 | `src/agentml/agents/prompts.py` | System prompt template |
+| `src/agentml/agents/backends/__init__.py` | Backends package init |
+| `src/agentml/agents/backends/claude.py` | `ClaudeAgentBackend` (Claude Agent SDK adapter) |
+| `src/agentml/agents/backends/stub.py` | `StubAgentBackend` (for testing & UI dev) |
 | `src/agentml/api/routers/agent.py` | Agent run API routes + SSE |
 | `frontend/src/pages/agent.tsx` | Agent page |
 | `frontend/src/hooks/use-agent.ts` | Agent runs hooks |
@@ -877,7 +1284,9 @@ if run.tool_hints:
 | `frontend/src/components/agent/agent-run-view.tsx` | Live agent run view |
 | `frontend/src/components/agent/event-feed.tsx` | Event feed component |
 | `frontend/src/components/agent/run-summary.tsx` | Run summary component |
-| `tests/unit/test_orchestrator.py` | Orchestrator tests (mocked SDK) |
+| `tests/unit/test_agent_backend.py` | Unit tests for `AgentBackend` + `StubAgentBackend` |
+| `tests/unit/test_orchestrator.py` | Orchestrator tests (using `StubAgentBackend`) |
+| `tests/unit/test_claude_backend.py` | Claude backend tests (mocked SDK) |
 | `tests/e2e/test_agent_run.py` | E2E agent run test |
 
 ### Modified files
@@ -885,7 +1294,7 @@ if run.tool_hints:
 | File | Change |
 |---|---|
 | `src/agentml/api/app.py` | Include agent router |
-| `src/agentml/config/settings.py` | Add `AgentSettings` |
+| `src/agentml/config/settings.py` | Add `AgentSettings` with `backend` field |
 | `pyproject.toml` | Add `sse-starlette` dependency |
 | `frontend/src/types.ts` | Add `AgentRun`, `AgentEvent`, `ToolHint` types |
 | `frontend/src/App.tsx` | Add agent route |
@@ -893,41 +1302,62 @@ if run.tool_hints:
 
 ---
 
-## 10. Implementation Steps
+## 12. Implementation Steps
 
 ```
 Step 1 — Dependencies                         ~15 min
 ├── Add sse-starlette to pyproject.toml
 └── npm install (if any new frontend deps)
 
-Step 2 — Agent orchestrator                    ~2 hours
-├── Create agents/orchestrator.py
-│   ├── AgentRun & AgentEvent dataclasses
-│   ├── AgentOrchestrator class
-│   └── Message → Event conversion
-├── Create agents/prompts.py
-│   └── build_system_prompt()
+Step 2 — Domain types                         ~30 min
+├── Create agents/types.py
+│   ├── RunStatus enum
+│   ├── AgentEvent dataclass
+│   ├── AgentRunConfig dataclass
+│   ├── AgentRunResult dataclass
+│   └── AgentRun dataclass
+└── Unit tests for types
+
+Step 3 — Agent backend interface              ~30 min
+├── Create agents/backend.py (AgentBackend ABC)
+├── Create agents/backends/__init__.py
+├── Create agents/backends/stub.py (StubAgentBackend)
+└── Unit test StubAgentBackend
+
+Step 4 — Claude agent backend                 ~1.5 hours
+├── Create agents/backends/claude.py
+│   ├── ClaudeAgentBackend class
+│   ├── Uses ClaudeToolAdapter from v1
+│   └── Claude message → AgentEvent mapping
+├── Create agents/factory.py
 └── Unit tests (mocked ClaudeSDKClient)
 
-Step 3 — API routes                            ~1.5 hours
+Step 5 — Orchestrator                          ~1 hour
+├── Create agents/orchestrator.py
+│   ├── AgentOrchestrator (SDK-agnostic)
+│   └── Uses AgentBackend interface
+├── Create agents/prompts.py
+└── Unit tests (using StubAgentBackend — no SDK needed)
+
+Step 6 — API routes                            ~1.5 hours
 ├── Create api/routers/agent.py
-│   ├── POST /agent/run
+│   ├── POST /agent/run (uses backend factory)
 │   ├── GET /agent/runs, /agent/runs/{id}
 │   ├── POST /agent/runs/{id}/stop
 │   └── GET /agent/runs/{id}/events (SSE)
 ├── Wire into app.py
 └── E2E test
 
-Step 4 — Configuration                        ~30 min
-├── Add AgentSettings to settings.py
-└── Wire into orchestrator
+Step 7 — Configuration                        ~30 min
+├── Add AgentSettings (with backend field) to settings.py
+└── Wire into agent router
 
-Step 5 — Frontend: types & hooks              ~1 hour
+Step 8 — Frontend: types & hooks              ~1 hour
 ├── Add types to types.ts
 ├── Create use-agent.ts
 └── Create use-agent-events.ts
 
-Step 6 — Frontend: agent page                 ~2-3 hours
+Step 9 — Frontend: agent page                 ~2-3 hours
 ├── Create agent-prompt-form.tsx
 ├── Create agent-run-view.tsx
 ├── Create event-feed.tsx
@@ -936,23 +1366,23 @@ Step 6 — Frontend: agent page                 ~2-3 hours
 ├── Add route to App.tsx
 └── Add nav item to shell.tsx
 
-Step 7 — Integration test                      ~1 hour
+Step 10 — Integration test                     ~1 hour
 ├── Start backend + frontend
 ├── Submit a prompt via UI
 ├── Verify: events stream, experiments appear, knowledge saved
 └── Test stop button
 
-Step 8 — Polish                                ~1 hour
+Step 11 — Polish                               ~1 hour
 ├── Error handling edge cases
 ├── Loading states
 └── Cleanup
 ```
 
-**Total estimated time: ~8-10 hours**
+**Total estimated time: ~10-12 hours**
 
 ---
 
-## 11. End-to-End Example: Boston Housing
+## 13. End-to-End Example: Boston Housing
 
 ### User submits via UI
 
@@ -963,6 +1393,23 @@ Step 8 — Polish                                ~1 hour
 | Name | Description | Source |
 |---|---|---|
 | `fetch_dataset` | Load the Boston housing dataset | `https://scikit-learn.org/1.0/modules/generated/sklearn.datasets.load_boston.html` |
+
+### What happens under the hood
+
+```
+1. POST /agent/run → agent router
+2. create_agent_backend("claude") → ClaudeAgentBackend
+3. AgentOrchestrator(lab, backend) created
+4. orchestrator.start(prompt)
+   ├── build_system_prompt(run) → system prompt string
+   ├── collect_all_tools(lab) → [ToolDef, ToolDef, ...] (11 tools)
+   └── backend.configure(tool_defs, config)
+       ├── ClaudeToolAdapter.create_server("agentml", tool_defs) → MCP server
+       └── ClaudeSDKClient(options) initialized
+5. asyncio.create_task(orchestrator.execute(run))
+   └── backend.execute(prompt) → yields AgentEvent stream
+       └── ClaudeSDKClient manages the conversation
+```
 
 ### What appears in the UI
 
@@ -1013,20 +1460,63 @@ Knowledge atoms: 7 recorded
 
 ---
 
+## Appendix: Full Adapter Pattern (v1 + v2 Together)
+
+The hexagonal architecture is now complete across both tools and agent sessions:
+
+```
+                    ┌──────────────────────────────────┐
+                    │        AgentML Core Domain        │
+                    │  ToolDef, ToolResult, AgentEvent   │
+                    │  AgentRun, AgentRunConfig          │
+                    │  Experiment, Knowledge, Task       │
+                    └──────────┬───────────────────────┘
+                               │
+              ┌────────────────┼────────────────┐
+              │                │                │
+    ┌─────────▼──────┐  ┌─────▼─────┐  ┌───────▼───────┐
+    │  ToolAdapter   │  │ AgentBack-│  │ TrackingConn- │
+    │  (v1 port)     │  │ end (v2)  │  │ ector (exist) │
+    └─────┬──────────┘  └─────┬─────┘  └───────┬───────┘
+          │                   │                 │
+   ┌──────▼──────┐    ┌──────▼──────┐   ┌──────▼──────┐
+   │  Claude     │    │  Claude     │   │  MLflow     │
+   │  ToolAdapter│    │  AgentBack- │   │  Tracker    │
+   │  (@tool)    │    │  end (SDK)  │   │             │
+   └─────────────┘    └─────────────┘   └─────────────┘
+   ┌─────────────┐    ┌─────────────┐   ┌─────────────┐
+   │  (future)   │    │  (future)   │   │  File       │
+   │  Copilot    │    │  Copilot    │   │  Tracker    │
+   │  ToolAdapter│    │  AgentBack- │   │             │
+   └─────────────┘    │  end        │   └─────────────┘
+                      └─────────────┘
+```
+
+| Layer | v1 (Tools) | v2 (Agent Sessions) |
+|---|---|---|
+| **Core abstraction** | `ToolDef` + `ToolResult` | `AgentBackend` + `AgentEvent` |
+| **Registry/collection** | `ToolRegistry`, `collect_all_tools()` | `create_agent_backend()` factory |
+| **Adapter interface** | `ToolAdapter` ABC | `AgentBackend` ABC |
+| **Claude impl** | `ClaudeToolAdapter` | `ClaudeAgentBackend` |
+| **Stub/test impl** | (call handler directly) | `StubAgentBackend` |
+| **Config dispatch** | `adapter="claude"` in server.py | `agent.backend="claude"` in settings |
+| **SDK-free testing** | Test `ToolDef.handler()` directly | Test orchestrator with `StubAgentBackend` |
+
+---
+
 ## Appendix: What We Removed vs. Original Plan
 
-The original `end-to-end-agent-harness.md` included complexity that the Claude Agent SDK makes unnecessary:
+The original plan included complexity that the adapter pattern and SDK make unnecessary:
 
-| Original concept | SDK replacement | Simplification |
+| Original concept | Current approach | Simplification |
 |---|---|---|
-| Custom `ToolRegistry` class | `@tool` + `create_sdk_mcp_server()` | No custom tool registry code |
-| JSON Schema generation from type hints | SDK's `input_schema` parameter | Schema defined inline |
-| Custom agent loop (plan→act→observe) | `ClaudeSDKClient` handles this | No agent loop code at all |
-| `execute_code` / `install_packages` tools | Claude Code's built-in `Bash` tool | No sandbox tools needed |
-| `create_tool` dynamic meta-tool | Agent uses `Bash` + `Write` to create code | Prompt hints instead |
-| Custom `Sandbox` enhancements | Claude Code sandbox + `Bash` | Keep existing sandbox for non-agent use |
-| Manual message parsing for tool calls | SDK yields typed `ToolUseBlock` etc. | Type-safe message handling |
-| `Agent` field in `LabEnvironment` | Orchestrator creates client per-run | No LabEnvironment changes |
-| `ToolRuntime` wiring in `build_lab()` | MCP server created per-run by orchestrator | No DI changes |
+| Orchestrator directly uses `ClaudeSDKClient` | Orchestrator uses `AgentBackend` ABC | SDK-agnostic orchestrator |
+| Hard-coded `AGENTML_TOOLS` list | `ClaudeToolAdapter.tool_names_prefixed()` | Tool names derived from adapter |
+| `_message_to_event()` in orchestrator | `_message_to_events()` in `ClaudeAgentBackend` | SDK-specific parsing stays in backend |
+| Claude imports in orchestrator | Zero SDK imports in orchestrator | Clean separation of concerns |
+| Testing requires mocking `ClaudeSDKClient` | `StubAgentBackend` for orchestrator tests | SDK-free orchestrator tests |
+| Custom agent loop | `ClaudeSDKClient` handles this | No agent loop code at all |
+| `execute_code` / `install_packages` tools | Built-in `Bash` tool (Claude SDK) | No sandbox tools needed |
+| `create_tool` dynamic meta-tool | Prompt hints instead | No dynamic tool creation |
 
-**Net result:** ~60% less code to write, and the complex parts (agent loop, tool dispatch, code execution) are handled by a production-tested SDK.
+**Net result:** The orchestrator is ~50 lines of SDK-agnostic code. All Claude-specific logic lives in `ClaudeAgentBackend`. Adding a new agent SDK means implementing one class — no changes to orchestrator, API routes, frontend, or tests.

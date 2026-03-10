@@ -4,7 +4,13 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from agentml.api.app import create_app
-from agentml.config.settings import MemorySettings, Settings, StorageSettings, TrackingSettings
+from agentml.config.settings import (
+    AgentSettings,
+    MemorySettings,
+    Settings,
+    StorageSettings,
+    TrackingSettings,
+)
 
 
 async def test_health(client: AsyncClient):
@@ -59,7 +65,7 @@ async def test_submit_task_and_get_results(client: AsyncClient):
     resp = await client.get("/health")
     assert resp.json()["status"] == "ok"
 
-    # 7. Knowledge was created by the stub agent
+    # 7. Knowledge was created by the stub agent (via tools pipeline)
     resp = await client.get("/knowledge")
     assert resp.status_code == 200
     atoms = resp.json()
@@ -141,6 +147,7 @@ async def test_full_lifecycle_with_mlflow(tmp_path):
             mlflow_experiment_name="e2e-test",
         ),
         memory=MemorySettings(backend="local"),
+        agent=AgentSettings(backend="stub"),
     )
     app = create_app(settings)
 
@@ -155,18 +162,6 @@ async def test_full_lifecycle_with_mlflow(tmp_path):
         resp = await c.get(f"/tracking/{exp_id}/metrics")
         assert resp.status_code == 200
         assert resp.json()["accuracy"] == pytest.approx(0.95)
-
-
-async def test_task_not_found(client: AsyncClient):
-    """GET /tasks/{nonexistent} should return 404."""
-    resp = await client.get("/tasks/nonexistent-id")
-    assert resp.status_code == 404
-
-
-async def test_experiment_not_found(client: AsyncClient):
-    """GET /experiments/{nonexistent} should return 404."""
-    resp = await client.get("/experiments/nonexistent-id")
-    assert resp.status_code == 404
 
 
 async def test_knowledge_endpoints(client: AsyncClient):

@@ -8,7 +8,13 @@ from httpx import ASGITransport, AsyncClient
 
 from agentml.api.app import create_app
 from agentml.api.deps import build_lab
-from agentml.config.settings import MemorySettings, Settings, StorageSettings, TrackingSettings
+from agentml.config.settings import (
+    AgentSettings,
+    MemorySettings,
+    Settings,
+    StorageSettings,
+    TrackingSettings,
+)
 from agentml.runtime.lab import LabEnvironment
 
 
@@ -21,11 +27,12 @@ def tmp_dir():
 
 @pytest.fixture
 def settings(tmp_dir: Path) -> Settings:
-    """Settings pointing at a temp directory (file tracker)."""
+    """Settings pointing at a temp directory (file tracker, stub agent)."""
     return Settings(
         storage=StorageSettings(base_dir=tmp_dir / ".agentml"),
         tracking=TrackingSettings(backend="file", enabled=True),
         memory=MemorySettings(backend="local"),
+        agent=AgentSettings(backend="stub"),
     )
 
 

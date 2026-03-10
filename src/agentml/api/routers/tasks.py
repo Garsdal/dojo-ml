@@ -1,12 +1,13 @@
-"""Tasks router — submit and query tasks."""
+"""Tasks router — submit and query tasks (unified with AgentOrchestrator)."""
 
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from agentml.agents.stub_agent import StubAgent
-from agentml.core.task import Task, TaskStatus
+from agentml.agents.factory import create_agent_backend
+from agentml.agents.orchestrator import AgentOrchestrator
+from agentml.core.task import Task, TaskResult, TaskStatus
 from agentml.runtime.lab import LabEnvironment
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
@@ -46,25 +47,33 @@ class TaskResponse(BaseModel):
 
 @router.post("", response_model=TaskResponse)
 async def create_task(body: CreateTaskRequest, request: Request) -> TaskResponse:
-    """Create and run a task."""
+    """Create and run a task through the AgentOrchestrator pipeline."""
     lab = _get_lab(request)
+    settings = request.app.state.settings
 
     task = Task(prompt=body.prompt)
     task.status = TaskStatus.RUNNING
     task.updated_at = datetime.now(UTC)
 
-    # Run with stub agent
-    agent = StubAgent()
-    result = await agent.run(task, lab)
+    # Use the same AgentOrchestrator + backend as /agent/run
+    backend = create_agent_backend(settings.agent.backend)
+    orchestrator = AgentOrchestrator(
+        lab,
+        backend,
+        max_turns=settings.agent.max_turns,
+        max_budget_usd=settings.agent.max_budget_usd,
+        permission_mode=settings.agent.permission_mode,
+        cwd=settings.agent.cwd,
+    )
 
-    task.result = result
-    task.status = TaskStatus.COMPLETED
-    task.updated_at = datetime.now(UTC)
+    run = await orchestrator.start(prompt=body.prompt, task_id=task.id)
+    await orchestrator.execute(run)
 
-    # Store task
-    _tasks[task.id] = task
+    # Build result from the run's completed state
+    best_exp_id: str | None = None
+    best_metrics: dict[str, float] = {}
 
-    # Gather experiment summaries
+    # Gather experiment summaries created by the tool pipeline
     experiments = await lab.experiment_store.list(task_id=task.id)
     exp_summaries = [
         ExperimentSummary(
@@ -75,15 +84,31 @@ async def create_task(body: CreateTaskRequest, request: Request) -> TaskResponse
         for exp in experiments
     ]
 
+    if experiments:
+        best_exp = experiments[0]
+        best_exp_id = best_exp.id
+        best_metrics = best_exp.result.metrics if best_exp.result else {}
+
+    task.result = TaskResult(
+        summary=f"Agent completed task: {body.prompt}",
+        best_experiment_id=best_exp_id,
+        metrics=best_metrics,
+        details={"experiments_run": len(experiments), "agent_run_id": run.id},
+    )
+    task.status = TaskStatus.COMPLETED if run.error is None else TaskStatus.FAILED
     task.experiment_ids = [exp.id for exp in experiments]
+    task.updated_at = datetime.now(UTC)
+
+    # Store task
+    _tasks[task.id] = task
 
     return TaskResponse(
         id=task.id,
         prompt=task.prompt,
         status=task.status.value,
-        summary=result.summary,
+        summary=task.result.summary,
         experiments=exp_summaries,
-        metrics=result.metrics,
+        metrics=task.result.metrics,
     )
 
 
@@ -122,8 +147,6 @@ async def get_task(task_id: str, request: Request) -> TaskResponse:
 
     task = _tasks.get(task_id)
     if task is None:
-        from fastapi import HTTPException
-
         raise HTTPException(status_code=404, detail="Task not found")
 
     experiments = await lab.experiment_store.list(task_id=task.id)

@@ -1,11 +1,11 @@
-"""Integration tests: memory store wired through LabEnvironment."""
+"""Integration tests: memory store wired through LabEnvironment via AgentOrchestrator."""
 
 import pytest
 
-from agentml.agents.stub_agent import StubAgent
+from agentml.agents.backends.stub import StubAgentBackend
+from agentml.agents.orchestrator import AgentOrchestrator
 from agentml.api.deps import build_lab
 from agentml.config.settings import MemorySettings, Settings, StorageSettings, TrackingSettings
-from agentml.core.task import Task
 
 
 @pytest.fixture
@@ -18,11 +18,17 @@ def lab(tmp_path):
     return build_lab(settings)
 
 
+async def _run_stub(lab, prompt: str) -> None:
+    """Helper: run the stub backend through the orchestrator pipeline."""
+    backend = StubAgentBackend()
+    orchestrator = AgentOrchestrator(lab, backend)
+    run = await orchestrator.start(prompt)
+    await orchestrator.execute(run)
+
+
 async def test_stub_agent_creates_knowledge(lab) -> None:
-    """StubAgent should create a knowledge atom in the memory store."""
-    task = Task(prompt="Test memory integration")
-    agent = StubAgent()
-    await agent.run(task, lab)
+    """StubAgentBackend should create a knowledge atom in the memory store."""
+    await _run_stub(lab, "Test memory integration")
 
     atoms = await lab.memory_store.list()
     assert len(atoms) >= 1
@@ -31,9 +37,7 @@ async def test_stub_agent_creates_knowledge(lab) -> None:
 
 async def test_knowledge_searchable_after_creation(lab) -> None:
     """Knowledge atoms created by the agent should be searchable."""
-    task = Task(prompt="classification on tabular data")
-    agent = StubAgent()
-    await agent.run(task, lab)
+    await _run_stub(lab, "classification on tabular data")
 
     results = await lab.memory_store.search("classification")
     assert len(results) >= 1
@@ -41,9 +45,8 @@ async def test_knowledge_searchable_after_creation(lab) -> None:
 
 async def test_knowledge_persists_across_tasks(lab) -> None:
     """Knowledge accumulated across tasks should all be available."""
-    agent = StubAgent()
-    await agent.run(Task(prompt="classification problem"), lab)
-    await agent.run(Task(prompt="regression problem"), lab)
+    await _run_stub(lab, "classification problem")
+    await _run_stub(lab, "regression problem")
 
     atoms = await lab.memory_store.list()
     assert len(atoms) >= 2

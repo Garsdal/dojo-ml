@@ -59,6 +59,16 @@ class FrontendSettings(BaseSettings):
     port: int = 5173
 
 
+class AgentSettings(BaseSettings):
+    """Agent execution configuration."""
+
+    backend: str = "claude"  # Which AgentBackend to use ("claude", "stub")
+    max_turns: int = 50  # Max tool-use round trips
+    max_budget_usd: float | None = None  # Max spend per run (None = unlimited)
+    permission_mode: str = "acceptEdits"  # Permission mode (backend-specific)
+    cwd: str | None = None  # Working directory for code execution
+
+
 class Settings(BaseSettings):
     """Root application settings.
 
@@ -78,6 +88,7 @@ class Settings(BaseSettings):
     tracking: TrackingSettings = Field(default_factory=TrackingSettings)
     frontend: FrontendSettings = Field(default_factory=FrontendSettings)
     memory: MemorySettings = Field(default_factory=MemorySettings)
+    agent: AgentSettings = Field(default_factory=AgentSettings)
 
     @classmethod
     def load(cls, config_path: Path | None = None) -> "Settings":

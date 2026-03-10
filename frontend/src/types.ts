@@ -41,3 +41,30 @@ export interface AppConfig {
   llm: { provider: string; model: string };
   tracking: { enabled: boolean };
 }
+
+export interface AgentRun {
+  id: string;
+  task_id: string;
+  prompt: string;
+  status: "pending" | "running" | "completed" | "failed" | "stopped";
+  events: AgentEvent[];
+  started_at: string | null;
+  completed_at: string | null;
+  total_cost_usd: number | null;
+  num_turns: number;
+  error: string | null;
+}
+
+export interface AgentEvent {
+  id: string;
+  timestamp: string;
+  event_type: string;
+  data: Record<string, unknown>;
+}
+
+export interface ToolHint {
+  name: string;
+  description: string;
+  source: string;
+  code_template?: string;
+}
