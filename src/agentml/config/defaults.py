@@ -16,6 +16,17 @@ DEFAULTS = {
         "model": "stub",
     },
     "tracking": {
+        "backend": "file",
         "enabled": True,
+        "mlflow_tracking_uri": "file:./mlruns",
+        "mlflow_experiment_name": "agentml",
+    },
+    "memory": {
+        "backend": "local",
+        "search_limit": 10,
+    },
+    "frontend": {
+        "enabled": True,
+        "port": 5173,
     },
 }

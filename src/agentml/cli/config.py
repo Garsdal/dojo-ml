@@ -37,7 +37,14 @@ storage:
   base_dir: ".agentml"
 
 tracking:
+  backend: "file"             # "file" or "mlflow"
   enabled: true
+  mlflow_tracking_uri: "file:./mlruns"
+  mlflow_experiment_name: "agentml"
+
+memory:
+  backend: "local"
+  search_limit: 10
 """
     config_path.write_text(default_config)
     console.print("  [green]✓[/green] Created .agentml/config.yaml")

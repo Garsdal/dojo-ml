@@ -46,6 +46,10 @@ class FileTracker(TrackingConnector):
         path = self._experiment_dir(experiment_id) / "metrics.json"
         return self._load_json(path)
 
+    async def close(self) -> None:
+        """No-op — file tracker has no resources to clean up."""
+        pass
+
     @staticmethod
     def _load_json(path: Path) -> dict:
         if path.exists():

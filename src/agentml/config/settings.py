@@ -36,7 +36,27 @@ class StorageSettings(BaseSettings):
 class TrackingSettings(BaseSettings):
     """Experiment tracking configuration."""
 
+    backend: str = "file"  # "file" | "mlflow"
     enabled: bool = True
+
+    # MLflow-specific
+    mlflow_tracking_uri: str = "file:./mlruns"  # MLflow tracking server URI
+    mlflow_experiment_name: str = "agentml"  # Default experiment name
+    mlflow_artifact_location: str | None = None  # Override artifact root (optional)
+
+
+class MemorySettings(BaseSettings):
+    """Knowledge memory configuration."""
+
+    backend: str = "local"  # "local" (future: "vector", "postgres")
+    search_limit: int = 10  # Default number of results from search
+
+
+class FrontendSettings(BaseSettings):
+    """Frontend dev server configuration."""
+
+    enabled: bool = True
+    port: int = 5173
 
 
 class Settings(BaseSettings):
@@ -56,6 +76,8 @@ class Settings(BaseSettings):
     sandbox: SandboxSettings = Field(default_factory=SandboxSettings)
     storage: StorageSettings = Field(default_factory=StorageSettings)
     tracking: TrackingSettings = Field(default_factory=TrackingSettings)
+    frontend: FrontendSettings = Field(default_factory=FrontendSettings)
+    memory: MemorySettings = Field(default_factory=MemorySettings)
 
     @classmethod
     def load(cls, config_path: Path | None = None) -> "Settings":

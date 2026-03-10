@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from agentml.core.experiment import Experiment, ExperimentResult, Hypothesis
+from agentml.core.knowledge import KnowledgeAtom
 from agentml.core.state_machine import ExperimentState
 from agentml.core.task import TaskResult
 from agentml.interfaces.agent import Agent
@@ -47,9 +48,19 @@ class StubAgent(Agent):
         experiment.state = ExperimentState.COMPLETED
         await lab.experiment_store.save(experiment)
 
-        # Log metrics
+        # Log metrics and params
         await lab.tracking.log_metrics(experiment.id, experiment.result.metrics)
         await lab.tracking.log_params(experiment.id, experiment.config)
+
+        # Write a knowledge atom to the memory store
+        atom = KnowledgeAtom(
+            context=f"Task: {task.prompt}",
+            claim="Stub model achieves 95% accuracy on test data.",
+            action="Use stub model as baseline for comparison.",
+            confidence=0.85,
+            evidence_ids=[experiment.id],
+        )
+        await lab.memory_store.add(atom)
 
         return TaskResult(
             summary=f"Stub agent completed task: {task.prompt}",

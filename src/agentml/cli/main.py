@@ -35,11 +35,14 @@ def main(
 def start(
     host: str = typer.Option("127.0.0.1", help="Host to bind to"),
     port: int = typer.Option(8000, help="Port to listen on"),
+    no_frontend: bool = typer.Option(
+        False, "--no-frontend", help="Skip launching the frontend dev server"
+    ),
 ) -> None:
     """Start the AgentML server."""
     from agentml.cli.start import start as _start
 
-    _start(host=host, port=port)
+    _start(host=host, port=port, no_frontend=no_frontend)
 
 
 @app.command()

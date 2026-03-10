@@ -1,4 +1,4 @@
-.PHONY: dev test lint run format
+.PHONY: dev test lint run format frontend-install frontend-dev frontend-build dev-all
 
 dev:
 	uv sync --all-extras
@@ -16,3 +16,19 @@ format:
 
 run:
 	uv run agentml start
+
+# Frontend
+frontend-install:
+	cd frontend && npm install
+
+frontend-dev:
+	cd frontend && npm run dev
+
+frontend-build:
+	cd frontend && npm run build
+
+# Full stack
+dev-all:
+	@echo "Starting frontend + backend..."
+	cd frontend && npm run dev &
+	uv run agentml start --no-frontend

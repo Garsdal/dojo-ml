@@ -48,3 +48,7 @@ class TrackingConnector(ABC):
             Dictionary of metric key-value pairs.
         """
         ...
+
+    async def close(self) -> None:
+        """Clean up resources. Default no-op."""
+        pass
