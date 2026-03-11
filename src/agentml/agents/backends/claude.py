@@ -114,6 +114,21 @@ class ClaudeAgentBackend(AgentBackend):
         if self._client:
             await self._client.interrupt()
 
+    async def complete(self, prompt: str) -> str:
+        """Simple one-shot completion using the Anthropic API."""
+        try:
+            import anthropic
+        except ImportError as e:
+            raise NotImplementedError("anthropic package required for completions") from e
+
+        client = anthropic.AsyncAnthropic()
+        response = await client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=4096,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return response.content[0].text
+
     @property
     def name(self) -> str:
         return "claude"

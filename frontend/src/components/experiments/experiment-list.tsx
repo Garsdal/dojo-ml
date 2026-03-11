@@ -55,7 +55,7 @@ export function ExperimentList({
       <TableHeader>
         <TableRow>
           <TableHead className="w-[120px]">ID</TableHead>
-          <TableHead className="w-[120px]">Task ID</TableHead>
+          <TableHead className="w-[120px]">Domain ID</TableHead>
           <TableHead className="w-[100px]">State</TableHead>
           <TableHead>Config</TableHead>
           <TableHead>Metrics</TableHead>
@@ -74,7 +74,7 @@ export function ExperimentList({
               {exp.id.slice(0, 8)}&hellip;
             </TableCell>
             <TableCell className="font-mono text-xs">
-              {exp.task_id.slice(0, 8)}&hellip;
+              {exp.domain_id.slice(0, 8)}&hellip;
             </TableCell>
             <TableCell>
               <StateBadge state={exp.state} />

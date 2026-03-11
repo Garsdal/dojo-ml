@@ -9,7 +9,9 @@ from agentml.interfaces.tracking import TrackingConnector
 from agentml.runtime.lab import LabEnvironment
 from agentml.sandbox.local import LocalSandbox
 from agentml.storage.local_artifact import LocalArtifactStore
+from agentml.storage.local_domain import LocalDomainStore
 from agentml.storage.local_experiment import LocalExperimentStore
+from agentml.storage.local_knowledge_link import LocalKnowledgeLinkStore
 from agentml.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -82,4 +84,6 @@ def build_lab(settings: Settings) -> LabEnvironment:
         artifact_store=LocalArtifactStore(base_dir=base / "artifacts"),
         memory_store=_build_memory(settings),
         tracking=_build_tracking(settings),
+        domain_store=LocalDomainStore(base_dir=base / "domains"),
+        knowledge_link_store=LocalKnowledgeLinkStore(base_dir=base / "knowledge_links"),
     )

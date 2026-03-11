@@ -21,14 +21,19 @@ export function useAgentRun(id: string | undefined) {
   );
 }
 
-// Start a run
+// Start a domain-scoped run
 export async function startAgentRun(
   prompt: string,
+  domainId?: string,
   toolHints?: ToolHint[],
 ): Promise<AgentRun> {
   return apiFetch<AgentRun>("/agent/run", {
     method: "POST",
-    body: JSON.stringify({ prompt, tool_hints: toolHints ?? [] }),
+    body: JSON.stringify({
+      prompt,
+      domain_id: domainId ?? null,
+      tool_hints: toolHints ?? [],
+    }),
   });
 }
 

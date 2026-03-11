@@ -81,6 +81,6 @@ class ExperimentService:
         """Get an experiment by ID."""
         return await self.lab.experiment_store.load(experiment_id)
 
-    async def list(self, *, task_id: str | None = None) -> list[Experiment]:
-        """List experiments, optionally filtered by task ID."""
-        return await self.lab.experiment_store.list(task_id=task_id)
+    async def list(self, *, domain_id: str | None = None) -> list[Experiment]:
+        """List experiments, optionally filtered by domain ID."""
+        return await self.lab.experiment_store.list(domain_id=domain_id)

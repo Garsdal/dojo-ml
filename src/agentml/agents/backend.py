@@ -66,6 +66,23 @@ class AgentBackend(ABC):
         """
         ...
 
+    async def complete(self, prompt: str) -> str:
+        """Simple one-shot completion (no tool use).
+
+        Used for structured generation tasks like tool generation.
+        Backends that support direct completions should override this.
+
+        Args:
+            prompt: The prompt to complete.
+
+        Returns:
+            The completion text.
+
+        Raises:
+            NotImplementedError: If the backend doesn't support completions.
+        """
+        raise NotImplementedError(f"{self.name} does not support direct completions")
+
     @property
     def name(self) -> str:
         """Human-readable backend name (e.g. 'claude', 'copilot')."""

@@ -28,10 +28,10 @@ class ExperimentResult:
 
 @dataclass
 class Experiment:
-    """An individual experiment within a task."""
+    """An individual experiment within a domain."""
 
     id: str = field(default_factory=generate_id)
-    task_id: str = ""
+    domain_id: str = ""
     hypothesis: Hypothesis | None = None
     config: dict[str, Any] = field(default_factory=dict)
     state: ExperimentState = ExperimentState.PENDING

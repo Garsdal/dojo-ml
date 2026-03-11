@@ -21,7 +21,7 @@ async def test_write_knowledge(lab):
     assert isinstance(result, ToolResult)
     assert not result.is_error
     assert "atom_id" in result.data
-    assert result.data["status"] == "saved"
+    assert result.data["action"] == "created"
 
 
 async def test_write_knowledge_minimal(lab):
@@ -92,14 +92,14 @@ async def test_list_knowledge(lab):
 
     await write_tool.handler(
         {
-            "context": "Context A",
-            "claim": "Claim A",
+            "context": "Image classification experiment",
+            "claim": "CNNs outperform MLPs on image datasets with high spatial correlation",
         }
     )
     await write_tool.handler(
         {
-            "context": "Context B",
-            "claim": "Claim B",
+            "context": "Natural language processing experiment",
+            "claim": "Transformer models achieve state-of-the-art on text summarization",
         }
     )
 

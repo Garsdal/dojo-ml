@@ -62,6 +62,16 @@ class LocalMemoryStore(MemoryStore):
             return True
         return False
 
+    async def get(self, atom_id: str) -> KnowledgeAtom | None:
+        """Get a single knowledge atom by ID."""
+        return self._atoms.get(atom_id)
+
+    async def update(self, atom: KnowledgeAtom) -> str:
+        """Update an existing knowledge atom."""
+        self._atoms[atom.id] = atom
+        self._save_to_disk()
+        return atom.id
+
     @staticmethod
     def _from_dict(data: dict) -> KnowledgeAtom:
         """Reconstruct a KnowledgeAtom from a dictionary."""
@@ -74,5 +84,12 @@ class LocalMemoryStore(MemoryStore):
             action=data.get("action", ""),
             confidence=data.get("confidence", 0.0),
             evidence_ids=data.get("evidence_ids", []),
-            created_at=datetime.fromisoformat(data["created_at"]),
+            version=data.get("version", 1),
+            supersedes=data.get("supersedes"),
+            created_at=datetime.fromisoformat(data["created_at"])
+            if "created_at" in data
+            else datetime.now(),
+            updated_at=datetime.fromisoformat(data["updated_at"])
+            if "updated_at" in data
+            else datetime.now(),
         )

@@ -80,11 +80,10 @@ class StubAgentBackend(AgentBackend):
         )
         await asyncio.sleep(0.01)
 
-        # 3. Create experiment (uses the task_id from the orchestrator's run)
-        # Extract task_id from the system prompt config — the orchestrator places it there
-        task_id = self._config.task_id if self._config and hasattr(self._config, "task_id") else ""
+        # 3. Create experiment (uses the domain_id from the orchestrator's run)
+        domain_id = self._config.domain_id if self._config else ""
         create_params = {
-            "task_id": task_id,
+            "domain_id": domain_id,
             "hypothesis": f"Stub hypothesis for: {prompt}",
             "config": {"model": "stub"},
         }

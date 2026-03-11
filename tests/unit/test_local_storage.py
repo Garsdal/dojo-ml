@@ -32,7 +32,7 @@ def memory_store(tmp_dir: Path):
 
 async def test_experiment_save_load(exp_store: LocalExperimentStore):
     exp = Experiment(
-        task_id="t1",
+        domain_id="d1",
         hypothesis=Hypothesis(description="Test hyp", variables={"x": 1}),
         config={"model": "test"},
         state=ExperimentState.COMPLETED,
@@ -43,7 +43,7 @@ async def test_experiment_save_load(exp_store: LocalExperimentStore):
 
     assert loaded is not None
     assert loaded.id == exp.id
-    assert loaded.task_id == "t1"
+    assert loaded.domain_id == "d1"
     assert loaded.state == ExperimentState.COMPLETED
     assert loaded.hypothesis is not None
     assert loaded.hypothesis.description == "Test hyp"
@@ -52,18 +52,18 @@ async def test_experiment_save_load(exp_store: LocalExperimentStore):
 
 
 async def test_experiment_list(exp_store: LocalExperimentStore):
-    await exp_store.save(Experiment(task_id="t1"))
-    await exp_store.save(Experiment(task_id="t2"))
+    await exp_store.save(Experiment(domain_id="d1"))
+    await exp_store.save(Experiment(domain_id="d2"))
 
     all_exps = await exp_store.list()
     assert len(all_exps) == 2
 
-    t1_exps = await exp_store.list(task_id="t1")
-    assert len(t1_exps) == 1
+    d1_exps = await exp_store.list(domain_id="d1")
+    assert len(d1_exps) == 1
 
 
 async def test_experiment_delete(exp_store: LocalExperimentStore):
-    exp = Experiment(task_id="t1")
+    exp = Experiment(domain_id="d1")
     await exp_store.save(exp)
 
     assert await exp_store.delete(exp.id) is True

@@ -15,7 +15,7 @@ export default function AgentPage() {
   const handleStart = async (prompt: string, toolHints: ToolHint[]) => {
     setIsStarting(true);
     try {
-      const run = await startAgentRun(prompt, toolHints);
+      const run = await startAgentRun(prompt, undefined, toolHints);
       setActiveRunId(run.id);
     } finally {
       setIsStarting(false);

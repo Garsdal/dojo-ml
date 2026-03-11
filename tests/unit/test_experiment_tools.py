@@ -12,7 +12,7 @@ async def test_create_experiment(lab):
 
     result = await create_tool.handler(
         {
-            "task_id": "test-task",
+            "domain_id": "test-domain",
             "hypothesis": "Test hypothesis",
         }
     )
@@ -29,7 +29,7 @@ async def test_create_experiment_with_variables(lab):
 
     result = await create_tool.handler(
         {
-            "task_id": "test-task",
+            "domain_id": "test-domain",
             "hypothesis": "LR outperforms DT",
             "variables": {"model": "linear_regression"},
             "config": {"seed": 42},
@@ -52,7 +52,7 @@ async def test_complete_experiment(lab):
 
     created = await create_tool.handler(
         {
-            "task_id": "test-task",
+            "domain_id": "test-domain",
             "hypothesis": "Test",
         }
     )
@@ -92,7 +92,7 @@ async def test_fail_experiment(lab):
 
     created = await create_tool.handler(
         {
-            "task_id": "test-task",
+            "domain_id": "test-domain",
             "hypothesis": "Will fail",
         }
     )
@@ -130,7 +130,7 @@ async def test_get_experiment(lab):
 
     created = await create_tool.handler(
         {
-            "task_id": "test-task",
+            "domain_id": "test-domain",
             "hypothesis": "Test hypothesis",
         }
     )
@@ -140,7 +140,7 @@ async def test_get_experiment(lab):
 
     assert not result.is_error
     assert result.data["id"] == exp_id
-    assert result.data["task_id"] == "test-task"
+    assert result.data["domain_id"] == "test-domain"
     assert result.data["state"] == "running"
     assert result.data["hypothesis"] == "Test hypothesis"
 
@@ -161,19 +161,19 @@ async def test_list_experiments(lab):
 
     await create_tool.handler(
         {
-            "task_id": "task-a",
+            "domain_id": "domain-a",
             "hypothesis": "H1",
         }
     )
     await create_tool.handler(
         {
-            "task_id": "task-a",
+            "domain_id": "domain-a",
             "hypothesis": "H2",
         }
     )
     await create_tool.handler(
         {
-            "task_id": "task-b",
+            "domain_id": "domain-b",
             "hypothesis": "H3",
         }
     )
@@ -182,8 +182,8 @@ async def test_list_experiments(lab):
     all_result = await list_tool.handler({})
     assert len(all_result.data) == 3
 
-    # Filter by task
-    filtered = await list_tool.handler({"task_id": "task-a"})
+    # Filter by domain
+    filtered = await list_tool.handler({"domain_id": "domain-a"})
     assert len(filtered.data) == 2
 
 
@@ -197,7 +197,7 @@ async def test_compare_experiments(lab):
     for i, hyp in enumerate(["Try LR", "Try DT"]):
         created = await create_tool.handler(
             {
-                "task_id": "task-cmp",
+                "domain_id": "domain-cmp",
                 "hypothesis": hyp,
             }
         )

@@ -33,13 +33,13 @@ class LocalExperimentStore(ExperimentStore):
         data = json.loads(path.read_text())
         return self._from_dict(data)
 
-    async def list(self, *, task_id: str | None = None) -> list[Experiment]:
-        """List all experiments, optionally filtered by task ID."""
+    async def list(self, *, domain_id: str | None = None) -> list[Experiment]:
+        """List all experiments, optionally filtered by domain ID."""
         experiments = []
         for path in self.base_dir.glob("*.json"):
             data = json.loads(path.read_text())
             exp = self._from_dict(data)
-            if task_id is None or exp.task_id == task_id:
+            if domain_id is None or exp.domain_id == domain_id:
                 experiments.append(exp)
         return experiments
 
@@ -66,7 +66,7 @@ class LocalExperimentStore(ExperimentStore):
 
         return Experiment(
             id=data["id"],
-            task_id=data.get("task_id", ""),
+            domain_id=data.get("domain_id", data.get("task_id", "")),
             hypothesis=hypothesis,
             config=data.get("config", {}),
             state=ExperimentState(data["state"]),

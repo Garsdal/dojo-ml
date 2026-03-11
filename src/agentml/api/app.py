@@ -8,7 +8,16 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from agentml._version import __version__
 from agentml.api.deps import build_lab
-from agentml.api.routers import agent, config, experiments, health, knowledge, tasks, tracking
+from agentml.api.routers import (
+    agent,
+    config,
+    domains,
+    experiments,
+    health,
+    knowledge,
+    tasks,
+    tracking,
+)
 from agentml.config.settings import Settings
 
 
@@ -58,6 +67,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     # Register routers
     app.include_router(health.router)
+    app.include_router(domains.router)
     app.include_router(tasks.router)
     app.include_router(experiments.router)
     app.include_router(knowledge.router)

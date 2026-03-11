@@ -36,6 +36,7 @@ class ToolHintRequest(BaseModel):
 
 class StartRunRequest(BaseModel):
     prompt: str
+    domain_id: str | None = None
     tool_hints: list[ToolHintRequest] = []
     max_turns: int = 50
     max_budget_usd: float | None = None
@@ -50,7 +51,7 @@ class AgentEventResponse(BaseModel):
 
 class AgentRunResponse(BaseModel):
     id: str
-    task_id: str
+    domain_id: str
     prompt: str
     status: str
     events: list[AgentEventResponse] = []
@@ -93,7 +94,9 @@ async def start_run(body: StartRunRequest, request: Request) -> AgentRunResponse
         for h in body.tool_hints
     ]
 
-    run = await orchestrator.start(prompt=body.prompt, tool_hints=tool_hints)
+    run = await orchestrator.start(
+        prompt=body.prompt, domain_id=body.domain_id, tool_hints=tool_hints
+    )
 
     _runs[run.id] = run
     _orchestrators[run.id] = orchestrator
@@ -179,7 +182,7 @@ async def _run_agent(run: AgentRun, orchestrator: AgentOrchestrator) -> None:
 def _to_response(run: AgentRun) -> AgentRunResponse:
     return AgentRunResponse(
         id=run.id,
-        task_id=run.task_id,
+        domain_id=run.domain_id,
         prompt=run.prompt,
         status=run.status.value,
         events=[

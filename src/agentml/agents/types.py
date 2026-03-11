@@ -44,7 +44,7 @@ class AgentRunConfig:
     max_budget_usd: float | None = None
     permission_mode: str = "acceptEdits"
     cwd: str | None = None
-    task_id: str = ""  # The task ID for the current run
+    domain_id: str = ""  # The domain ID for the current run
 
 
 @dataclass
@@ -78,7 +78,7 @@ class AgentRun:
     """Full state of a single agent run — managed by the orchestrator."""
 
     id: str = field(default_factory=generate_id)
-    task_id: str = ""
+    domain_id: str = ""
     prompt: str = ""
     status: RunStatus = RunStatus.PENDING
     events: list[AgentEvent] = field(default_factory=list)

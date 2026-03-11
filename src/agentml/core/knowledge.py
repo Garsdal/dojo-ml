@@ -16,4 +16,7 @@ class KnowledgeAtom:
     action: str = ""
     confidence: float = 0.0
     evidence_ids: list[str] = field(default_factory=list)
+    version: int = 1
+    supersedes: str | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))

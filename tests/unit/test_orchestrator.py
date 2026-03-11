@@ -19,15 +19,15 @@ class TestAgentOrchestrator:
         assert run.status == RunStatus.RUNNING
         assert run.prompt == "test prompt"
         assert run.started_at is not None
-        assert run.task_id  # Should have a generated task ID
+        assert run.domain_id  # Should have a generated domain ID
 
-    async def test_start_with_custom_task_id(self, lab):
+    async def test_start_with_custom_domain_id(self, lab):
         backend = StubAgentBackend()
         orchestrator = AgentOrchestrator(lab, backend)
 
-        run = await orchestrator.start("test", task_id="custom-id")
+        run = await orchestrator.start("test", domain_id="custom-id")
 
-        assert run.task_id == "custom-id"
+        assert run.domain_id == "custom-id"
 
     async def test_start_with_tool_hints(self, lab):
         backend = StubAgentBackend()
@@ -134,13 +134,13 @@ class TestAgentOrchestrator:
         assert run.config.permission_mode == "plan"
         assert run.config.cwd == "/tmp/test"
 
-    async def test_config_includes_task_id(self, lab):
+    async def test_config_includes_domain_id(self, lab):
         backend = StubAgentBackend()
         orchestrator = AgentOrchestrator(lab, backend)
 
-        run = await orchestrator.start("test", task_id="my-task")
+        run = await orchestrator.start("test", domain_id="my-domain")
 
-        assert run.config.task_id == "my-task"
+        assert run.config.domain_id == "my-domain"
 
     async def test_full_pipeline_creates_experiment(self, lab):
         """Orchestrator + StubAgentBackend should create a real experiment."""

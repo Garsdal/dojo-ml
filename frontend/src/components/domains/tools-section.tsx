@@ -1,0 +1,269 @@
+import { useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { addDomainTool, removeDomainTool } from "@/hooks/use-domain";
+import { apiFetch } from "@/lib/api";
+import type { DomainTool } from "@/types";
+
+interface GeneratedTool {
+  name: string;
+  description: string;
+  type: string;
+  code: string;
+  parameters: Record<string, unknown>;
+}
+
+interface ToolsSectionProps {
+  domainId: string;
+  tools: DomainTool[];
+  onMutate: () => void;
+}
+
+export function ToolsSection({ domainId, tools, onMutate }: ToolsSectionProps) {
+  const [showForm, setShowForm] = useState(false);
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [code, setCode] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const handleAdd = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!name.trim()) return;
+    setIsSubmitting(true);
+    try {
+      await addDomainTool(domainId, {
+        name: name.trim(),
+        description,
+        code,
+        type: "custom",
+        created_by: "human",
+      });
+      setName("");
+      setDescription("");
+      setCode("");
+      setShowForm(false);
+      onMutate();
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleRemove = async (toolId: string) => {
+    await removeDomainTool(domainId, toolId);
+    onMutate();
+  };
+
+  return (
+    <div className="space-y-3">
+      {tools.length === 0 && !showForm && (
+        <p className="text-sm text-muted-foreground">
+          No custom tools. Add tools to extend the agent's capabilities.
+        </p>
+      )}
+
+      {tools.map((tool) => (
+        <div
+          key={tool.id}
+          className="flex items-start justify-between rounded-lg border p-3"
+        >
+          <div className="space-y-0.5">
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-medium font-mono">{tool.name}</span>
+              <span className="text-[10px] text-muted-foreground uppercase">
+                {tool.type}
+              </span>
+            </div>
+            {tool.description && (
+              <p className="text-xs text-muted-foreground">
+                {tool.description}
+              </p>
+            )}
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="text-xs text-muted-foreground hover:text-destructive"
+            onClick={() => handleRemove(tool.id)}
+          >
+            Remove
+          </Button>
+        </div>
+      ))}
+
+      {showForm ? (
+        <form onSubmit={handleAdd} className="space-y-3 rounded-lg border p-3">
+          <Input
+            placeholder="Tool name (e.g. load_dataset)"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            className="bg-secondary/50"
+          />
+          <Input
+            placeholder="Description"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            className="bg-secondary/50"
+          />
+          <Textarea
+            placeholder="Python code (optional)"
+            value={code}
+            onChange={(e) => setCode(e.target.value)}
+            className="bg-secondary/50 min-h-[80px] resize-none font-mono text-xs"
+          />
+          <div className="flex gap-2">
+            <Button
+              type="submit"
+              size="sm"
+              disabled={!name.trim() || isSubmitting}
+            >
+              {isSubmitting ? "Adding…" : "Add Tool"}
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => setShowForm(false)}
+            >
+              Cancel
+            </Button>
+          </div>
+        </form>
+      ) : (
+        <div className="flex gap-2">
+          <Button variant="outline" size="sm" onClick={() => setShowForm(true)}>
+            + Add Tool
+          </Button>
+          <GenerateToolsButton domainId={domainId} onMutate={onMutate} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function GenerateToolsButton({
+  domainId,
+  onMutate,
+}: {
+  domainId: string;
+  onMutate: () => void;
+}) {
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [generated, setGenerated] = useState<GeneratedTool[]>([]);
+  const [hint, setHint] = useState("");
+  const [showHint, setShowHint] = useState(false);
+  const [isAdding, setIsAdding] = useState<string | null>(null);
+
+  const handleGenerate = async () => {
+    setIsGenerating(true);
+    try {
+      const result = await apiFetch<{
+        generated: GeneratedTool[];
+      }>(`/domains/${domainId}/tools/generate`, {
+        method: "POST",
+        body: JSON.stringify({ hint }),
+      });
+      setGenerated(result.generated);
+      setShowHint(false);
+    } catch {
+      // Silently handle — backend may not support completions
+      setGenerated([]);
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  const handleApprove = async (tool: GeneratedTool) => {
+    setIsAdding(tool.name);
+    try {
+      await addDomainTool(domainId, {
+        name: tool.name,
+        description: tool.description,
+        type: tool.type,
+        code: tool.code,
+        parameters: tool.parameters,
+        created_by: "ai",
+      });
+      setGenerated((prev) => prev.filter((t) => t.name !== tool.name));
+      onMutate();
+    } finally {
+      setIsAdding(null);
+    }
+  };
+
+  if (generated.length > 0) {
+    return (
+      <div className="space-y-3 w-full">
+        <div className="flex items-center justify-between">
+          <span className="text-xs font-medium text-muted-foreground">
+            AI-Generated Tools (review & approve)
+          </span>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="text-xs"
+            onClick={() => setGenerated([])}
+          >
+            Dismiss
+          </Button>
+        </div>
+        {generated.map((tool) => (
+          <div
+            key={tool.name}
+            className="rounded-lg border border-dashed p-3 space-y-2"
+          >
+            <div className="flex items-center justify-between">
+              <div>
+                <span className="text-sm font-medium font-mono">
+                  {tool.name}
+                </span>
+                <span className="ml-2 text-[10px] text-muted-foreground uppercase">
+                  {tool.type}
+                </span>
+              </div>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => handleApprove(tool)}
+                disabled={isAdding === tool.name}
+              >
+                {isAdding === tool.name ? "Adding…" : "Approve"}
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">{tool.description}</p>
+            {tool.code && (
+              <pre className="text-[10px] font-mono bg-secondary/50 rounded p-2 max-h-[120px] overflow-auto">
+                {tool.code}
+              </pre>
+            )}
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  if (showHint) {
+    return (
+      <div className="flex gap-2 items-center">
+        <Input
+          placeholder="Hint (e.g. data loaders for CSV files)"
+          value={hint}
+          onChange={(e) => setHint(e.target.value)}
+          className="bg-secondary/50 text-xs h-8"
+        />
+        <Button size="sm" onClick={handleGenerate} disabled={isGenerating}>
+          {isGenerating ? "Generating…" : "Generate"}
+        </Button>
+        <Button size="sm" variant="ghost" onClick={() => setShowHint(false)}>
+          Cancel
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <Button variant="outline" size="sm" onClick={() => setShowHint(true)}>
+      ✨ AI Generate
+    </Button>
+  );
+}

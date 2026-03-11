@@ -53,3 +53,21 @@ class MemoryStore(ABC):
             True if deleted, False if not found.
         """
         ...
+
+    async def get(self, atom_id: str) -> KnowledgeAtom | None:
+        """Get a single knowledge atom by ID.
+
+        Default implementation searches all atoms. Override for efficiency.
+        """
+        for atom in await self.list():
+            if atom.id == atom_id:
+                return atom
+        return None
+
+    async def update(self, atom: KnowledgeAtom) -> str:
+        """Update an existing knowledge atom.
+
+        Default implementation deletes and re-adds. Override for efficiency.
+        """
+        await self.delete(atom.id)
+        return await self.add(atom)

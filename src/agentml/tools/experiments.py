@@ -14,7 +14,7 @@ def create_experiment_tools(lab: LabEnvironment) -> list[ToolDef]:
 
     async def create_experiment(args: dict[str, Any]) -> ToolResult:
         exp = Experiment(
-            task_id=args["task_id"],
+            domain_id=args["domain_id"],
             hypothesis=Hypothesis(
                 description=args["hypothesis"],
                 variables=args.get("variables", {}),
@@ -56,7 +56,7 @@ def create_experiment_tools(lab: LabEnvironment) -> list[ToolDef]:
         return ToolResult(
             data={
                 "id": exp.id,
-                "task_id": exp.task_id,
+                "domain_id": exp.domain_id,
                 "state": exp.state.value,
                 "hypothesis": exp.hypothesis.description if exp.hypothesis else None,
                 "variables": exp.hypothesis.variables if exp.hypothesis else {},
@@ -68,7 +68,7 @@ def create_experiment_tools(lab: LabEnvironment) -> list[ToolDef]:
         )
 
     async def list_experiments(args: dict[str, Any]) -> ToolResult:
-        experiments = await service.list(task_id=args.get("task_id"))
+        experiments = await service.list(domain_id=args.get("domain_id"))
         return ToolResult(
             data=[
                 {
@@ -107,9 +107,9 @@ def create_experiment_tools(lab: LabEnvironment) -> list[ToolDef]:
             parameters={
                 "type": "object",
                 "properties": {
-                    "task_id": {
+                    "domain_id": {
                         "type": "string",
-                        "description": "The task this experiment belongs to",
+                        "description": "The domain this experiment belongs to",
                     },
                     "hypothesis": {
                         "type": "string",
@@ -126,7 +126,7 @@ def create_experiment_tools(lab: LabEnvironment) -> list[ToolDef]:
                         "description": "Experiment configuration metadata",
                     },
                 },
-                "required": ["task_id", "hypothesis"],
+                "required": ["domain_id", "hypothesis"],
             },
             handler=create_experiment,
         ),
@@ -192,13 +192,13 @@ def create_experiment_tools(lab: LabEnvironment) -> list[ToolDef]:
         ),
         ToolDef(
             name="list_experiments",
-            description="List all experiments, optionally filtered by task ID.",
+            description="List all experiments, optionally filtered by domain ID.",
             parameters={
                 "type": "object",
                 "properties": {
-                    "task_id": {
+                    "domain_id": {
                         "type": "string",
-                        "description": "Filter by task ID (optional)",
+                        "description": "Filter by domain ID (optional)",
                     },
                 },
             },

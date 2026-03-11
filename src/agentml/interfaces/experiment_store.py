@@ -33,11 +33,11 @@ class ExperimentStore(ABC):
         ...
 
     @abstractmethod
-    async def list(self, *, task_id: str | None = None) -> list[Experiment]:
-        """List experiments, optionally filtered by task ID.
+    async def list(self, *, domain_id: str | None = None) -> list[Experiment]:
+        """List experiments, optionally filtered by domain ID.
 
         Args:
-            task_id: If provided, only return experiments for this task.
+            domain_id: If provided, only return experiments for this domain.
 
         Returns:
             A list of experiments.

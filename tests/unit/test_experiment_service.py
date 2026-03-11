@@ -14,18 +14,18 @@ def service(lab: LabEnvironment) -> ExperimentService:
 
 
 async def test_create_experiment(service: ExperimentService):
-    exp = Experiment(task_id="task-1")
+    exp = Experiment(domain_id="domain-1")
     exp_id = await service.create(exp)
     assert exp_id == exp.id
 
     loaded = await service.get(exp_id)
     assert loaded is not None
-    assert loaded.task_id == "task-1"
+    assert loaded.domain_id == "domain-1"
     assert loaded.state == ExperimentState.PENDING
 
 
 async def test_run_experiment(service: ExperimentService):
-    exp = Experiment(task_id="task-1")
+    exp = Experiment(domain_id="domain-1")
     await service.create(exp)
 
     running = await service.run(exp.id)
@@ -33,7 +33,7 @@ async def test_run_experiment(service: ExperimentService):
 
 
 async def test_complete_experiment(service: ExperimentService):
-    exp = Experiment(task_id="task-1")
+    exp = Experiment(domain_id="domain-1")
     await service.create(exp)
     exp = await service.run(exp.id)
 
@@ -43,7 +43,7 @@ async def test_complete_experiment(service: ExperimentService):
 
 
 async def test_fail_experiment(service: ExperimentService):
-    exp = Experiment(task_id="task-1")
+    exp = Experiment(domain_id="domain-1")
     await service.create(exp)
     exp = await service.run(exp.id)
 
@@ -57,12 +57,12 @@ async def test_run_nonexistent_raises(service: ExperimentService):
 
 
 async def test_list_experiments(service: ExperimentService):
-    await service.create(Experiment(task_id="task-1"))
-    await service.create(Experiment(task_id="task-1"))
-    await service.create(Experiment(task_id="task-2"))
+    await service.create(Experiment(domain_id="domain-1"))
+    await service.create(Experiment(domain_id="domain-1"))
+    await service.create(Experiment(domain_id="domain-2"))
 
     all_exps = await service.list()
     assert len(all_exps) == 3
 
-    task1_exps = await service.list(task_id="task-1")
-    assert len(task1_exps) == 2
+    domain1_exps = await service.list(domain_id="domain-1")
+    assert len(domain1_exps) == 2

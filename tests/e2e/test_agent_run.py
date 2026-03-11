@@ -36,7 +36,7 @@ class TestAgentRunEndpoints:
         assert data["status"] == "running"
         assert data["prompt"] == "Test ML research task"
         assert data["id"]
-        assert data["task_id"]
+        assert data["domain_id"]
 
     async def test_list_runs(self, agent_client):
         # Start a run first

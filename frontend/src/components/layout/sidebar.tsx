@@ -1,20 +1,8 @@
 import { NavLink } from "react-router-dom";
-import {
-  LayoutDashboard,
-  ListTodo,
-  FlaskConical,
-  Brain,
-  Bot,
-} from "lucide-react";
+import { FlaskConical } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-const navItems = [
-  { to: "/", label: "Dashboard", icon: LayoutDashboard },
-  { to: "/tasks", label: "Tasks", icon: ListTodo },
-  { to: "/experiments", label: "Experiments", icon: FlaskConical },
-  { to: "/knowledge", label: "Knowledge", icon: Brain },
-  { to: "/agent", label: "Agent", icon: Bot },
-];
+const navItems = [{ to: "/", label: "Domains", icon: FlaskConical }];
 
 export function Sidebar() {
   return (

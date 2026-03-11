@@ -25,8 +25,8 @@ export function ExperimentDetail({ experiment }: ExperimentDetailProps) {
             <p className="font-mono text-sm">{experiment.id}</p>
           </div>
           <div>
-            <p className="text-xs text-muted-foreground mb-1">Task ID</p>
-            <p className="font-mono text-sm">{experiment.task_id}</p>
+            <p className="text-xs text-muted-foreground mb-1">Domain ID</p>
+            <p className="font-mono text-sm">{experiment.domain_id}</p>
           </div>
         </div>
 

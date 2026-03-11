@@ -74,7 +74,7 @@ async def create_task(body: CreateTaskRequest, request: Request) -> TaskResponse
     best_metrics: dict[str, float] = {}
 
     # Gather experiment summaries created by the tool pipeline
-    experiments = await lab.experiment_store.list(task_id=task.id)
+    experiments = await lab.experiment_store.list(domain_id=task.id)
     exp_summaries = [
         ExperimentSummary(
             id=exp.id,
@@ -118,7 +118,7 @@ async def list_tasks(request: Request) -> list[TaskResponse]:
     lab = _get_lab(request)
     responses = []
     for task in _tasks.values():
-        experiments = await lab.experiment_store.list(task_id=task.id)
+        experiments = await lab.experiment_store.list(domain_id=task.id)
         exp_summaries = [
             ExperimentSummary(
                 id=exp.id,
@@ -149,7 +149,7 @@ async def get_task(task_id: str, request: Request) -> TaskResponse:
     if task is None:
         raise HTTPException(status_code=404, detail="Task not found")
 
-    experiments = await lab.experiment_store.list(task_id=task.id)
+    experiments = await lab.experiment_store.list(domain_id=task.id)
     exp_summaries = [
         ExperimentSummary(
             id=exp.id,

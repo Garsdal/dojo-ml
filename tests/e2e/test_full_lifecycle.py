@@ -104,11 +104,12 @@ async def test_create_knowledge_via_api(client: AsyncClient):
         },
     )
     assert resp.status_code == 201
-    atom = resp.json()
-    assert atom["claim"] == "CNNs outperform MLPs on image data"
+    data = resp.json()
+    assert data["atom_id"]
+    assert data["action"] == "created"
 
     resp = await client.get("/knowledge")
-    assert any(a["id"] == atom["id"] for a in resp.json())
+    assert any(a["id"] == data["atom_id"] for a in resp.json())
 
 
 async def test_delete_knowledge_via_api(client: AsyncClient):
@@ -116,10 +117,10 @@ async def test_delete_knowledge_via_api(client: AsyncClient):
     # Create one
     resp = await client.post(
         "/knowledge",
-        json={"context": "test", "claim": "to be deleted"},
+        json={"context": "test delete", "claim": "to be deleted"},
     )
     assert resp.status_code == 201
-    atom_id = resp.json()["id"]
+    atom_id = resp.json()["atom_id"]
 
     # Delete it
     resp = await client.delete(f"/knowledge/{atom_id}")

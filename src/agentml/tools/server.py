@@ -4,23 +4,35 @@ from __future__ import annotations
 
 from typing import Any
 
+from agentml.core.domain import DomainTool
 from agentml.runtime.lab import LabEnvironment
 from agentml.tools.base import ToolDef
+from agentml.tools.domain_tools import domain_tools_to_tooldefs
 from agentml.tools.experiments import create_experiment_tools
 from agentml.tools.knowledge import create_knowledge_tools
 from agentml.tools.tracking import create_tracking_tools
 
 
-def collect_all_tools(lab: LabEnvironment) -> list[ToolDef]:
+def collect_all_tools(
+    lab: LabEnvironment,
+    *,
+    domain_tools: list[DomainTool] | None = None,
+) -> list[ToolDef]:
     """Collect all AgentML tool definitions backed by a LabEnvironment.
 
     Returns framework-agnostic ToolDef instances — not tied to any SDK.
+    Optionally includes domain-specific tools converted from DomainTool definitions.
     """
-    return [
+    tools = [
         *create_experiment_tools(lab),
         *create_knowledge_tools(lab),
         *create_tracking_tools(lab),
     ]
+
+    if domain_tools:
+        tools.extend(domain_tools_to_tooldefs(domain_tools))
+
+    return tools
 
 
 def create_agentml_server(lab: LabEnvironment, *, adapter: str = "claude") -> Any:

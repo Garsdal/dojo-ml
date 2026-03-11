@@ -1,11 +1,38 @@
-export interface Task {
+// --- Domain ---
+
+export type DomainStatus =
+  | "draft"
+  | "active"
+  | "paused"
+  | "completed"
+  | "archived";
+
+export interface DomainTool {
   id: string;
-  prompt: string;
-  status: "pending" | "running" | "completed" | "failed";
-  summary: string | null;
-  experiments: ExperimentSummary[];
-  metrics: Record<string, number> | null;
+  name: string;
+  description: string;
+  type: string;
+  code: string;
+  parameters: Record<string, unknown>;
+  created_by: string;
+  created_at: string;
 }
+
+export interface Domain {
+  id: string;
+  name: string;
+  description: string;
+  prompt: string;
+  status: DomainStatus;
+  config: Record<string, unknown>;
+  metadata: Record<string, unknown>;
+  experiment_ids: string[];
+  tools: DomainTool[];
+  created_at: string;
+  updated_at: string;
+}
+
+// --- Experiments ---
 
 export interface ExperimentSummary {
   id: string;
@@ -15,12 +42,14 @@ export interface ExperimentSummary {
 
 export interface Experiment {
   id: string;
-  task_id: string;
+  domain_id: string;
   state: "pending" | "running" | "completed" | "failed" | "archived";
   config: Record<string, unknown>;
   metrics: Record<string, number> | null;
   error: string | null;
 }
+
+// --- Knowledge ---
 
 export interface KnowledgeAtom {
   id: string;
@@ -29,22 +58,56 @@ export interface KnowledgeAtom {
   action: string;
   confidence: number;
   evidence_ids: string[];
+  version: number;
+  supersedes: string | null;
 }
 
-export interface HealthStatus {
-  status: "ok" | "error";
+export interface KnowledgeLink {
+  id: string;
+  atom_id: string;
+  experiment_id: string;
+  domain_id: string;
+  link_type: string;
+  created_at: string;
 }
 
-export interface AppConfig {
-  api: { host: string; port: number };
-  storage: { base_dir: string };
-  llm: { provider: string; model: string };
-  tracking: { enabled: boolean };
+export interface KnowledgeSnapshot {
+  id: string;
+  atom_id: string;
+  version: number;
+  confidence: number;
+  claim: string;
+  evidence_ids: string[];
+  timestamp: string;
 }
+
+export interface KnowledgeDetail {
+  atom: KnowledgeAtom;
+  links: KnowledgeLink[];
+  history: KnowledgeSnapshot[];
+}
+
+export interface LinkingResult {
+  atom_id: string;
+  action: "created" | "merged";
+  version: number;
+  confidence: number;
+  merged_with: string | null;
+}
+
+// --- Metrics ---
+
+export interface MetricPoint {
+  experiment_id: string;
+  state: string;
+  metrics: Record<string, number>;
+}
+
+// --- Agent ---
 
 export interface AgentRun {
   id: string;
-  task_id: string;
+  domain_id: string;
   prompt: string;
   status: "pending" | "running" | "completed" | "failed" | "stopped";
   events: AgentEvent[];
@@ -67,4 +130,28 @@ export interface ToolHint {
   description: string;
   source: string;
   code_template?: string;
+}
+
+// --- Health / Config ---
+
+export interface HealthStatus {
+  status: "ok" | "error";
+}
+
+export interface AppConfig {
+  api: { host: string; port: number };
+  storage: { base_dir: string };
+  llm: { provider: string; model: string };
+  tracking: { enabled: boolean };
+}
+
+// --- Legacy (backward compat) ---
+
+export interface Task {
+  id: string;
+  prompt: string;
+  status: "pending" | "running" | "completed" | "failed";
+  summary: string | null;
+  experiments: ExperimentSummary[];
+  metrics: Record<string, number> | null;
 }

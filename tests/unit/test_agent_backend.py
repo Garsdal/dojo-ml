@@ -35,7 +35,7 @@ class TestStubAgentBackend:
     async def test_execute_with_real_tools(self, lab):
         """When configured with real tool defs, stub calls actual tool handlers."""
         tools = collect_all_tools(lab)
-        config = AgentRunConfig(task_id="test-task-123")
+        config = AgentRunConfig(domain_id="test-domain-123")
         backend = StubAgentBackend()
         await backend.configure(tools, config)
 
@@ -63,7 +63,7 @@ class TestStubAgentBackend:
     async def test_execute_creates_experiment_in_store(self, lab):
         """The scripted flow should actually create an experiment in the store."""
         tools = collect_all_tools(lab)
-        config = AgentRunConfig(task_id="test-task-456")
+        config = AgentRunConfig(domain_id="test-domain-456")
         backend = StubAgentBackend()
         await backend.configure(tools, config)
 
@@ -73,14 +73,14 @@ class TestStubAgentBackend:
         experiments = await lab.experiment_store.list()
         assert len(experiments) == 1
         exp = experiments[0]
-        assert exp.task_id == "test-task-456"
+        assert exp.domain_id == "test-domain-456"
         assert exp.result is not None
         assert exp.result.metrics["accuracy"] == pytest.approx(0.95)
 
     async def test_execute_writes_knowledge(self, lab):
         """The scripted flow should write a knowledge atom."""
         tools = collect_all_tools(lab)
-        config = AgentRunConfig(task_id="test-task-789")
+        config = AgentRunConfig(domain_id="test-domain-789")
         backend = StubAgentBackend()
         await backend.configure(tools, config)
 
@@ -94,7 +94,7 @@ class TestStubAgentBackend:
     async def test_execute_logs_metrics_to_tracking(self, lab):
         """The scripted flow should log metrics via the tracking backend."""
         tools = collect_all_tools(lab)
-        config = AgentRunConfig(task_id="test-task-track")
+        config = AgentRunConfig(domain_id="test-domain-track")
         backend = StubAgentBackend()
         await backend.configure(tools, config)
 

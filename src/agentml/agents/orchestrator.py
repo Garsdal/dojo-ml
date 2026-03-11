@@ -14,6 +14,8 @@ from agentml.agents.types import (
     RunStatus,
     ToolHint,
 )
+from agentml.core.domain import Domain
+from agentml.runtime.knowledge_linker import KnowledgeLinker
 from agentml.runtime.lab import LabEnvironment
 from agentml.tools.server import collect_all_tools
 from agentml.utils.ids import generate_id
@@ -57,6 +59,7 @@ class AgentOrchestrator:
         self,
         prompt: str,
         task_id: str | None = None,
+        domain_id: str | None = None,
         tool_hints: list[ToolHint] | None = None,
     ) -> AgentRun:
         """Prepare an agent run: create run state, configure backend.
@@ -64,8 +67,10 @@ class AgentOrchestrator:
         Does not start execution — call execute() separately
         (usually in a background task).
         """
+        # Support both domain_id (new) and task_id (backward compat)
+        resolved_domain_id = domain_id or task_id or generate_id()
         run = AgentRun(
-            task_id=task_id or generate_id(),
+            domain_id=resolved_domain_id,
             prompt=prompt,
             status=RunStatus.RUNNING,
             started_at=datetime.now(UTC),
@@ -73,8 +78,24 @@ class AgentOrchestrator:
         )
         self._run = run
 
-        # Build system prompt
-        system_prompt = build_system_prompt(run)
+        # Load domain context if available
+        domain: Domain | None = None
+        accumulated_knowledge: list[str] = []
+
+        if self.lab.domain_store is not None:
+            domain = await self.lab.domain_store.load(resolved_domain_id)
+
+        if domain is not None and self.lab.knowledge_link_store is not None:
+            linker = KnowledgeLinker(self.lab.memory_store, self.lab.knowledge_link_store)
+            atoms = await linker.get_domain_knowledge(resolved_domain_id)
+            accumulated_knowledge = [f"- [{a.confidence:.1f}] {a.claim}" for a in atoms[:20]]
+
+        # Build system prompt with domain context
+        system_prompt = build_system_prompt(
+            run,
+            domain=domain,
+            accumulated_knowledge=accumulated_knowledge,
+        )
 
         # Build config
         config = AgentRunConfig(
@@ -83,12 +104,14 @@ class AgentOrchestrator:
             max_budget_usd=self.max_budget_usd,
             permission_mode=self.permission_mode,
             cwd=self.cwd,
-            task_id=run.task_id,
+            domain_id=run.domain_id,
         )
         run.config = config
 
         # Collect v1 tool definitions (framework-agnostic)
-        tool_defs = collect_all_tools(self.lab)
+        # Include domain-specific tools if domain has them
+        domain_tools = domain.tools if domain else None
+        tool_defs = collect_all_tools(self.lab, domain_tools=domain_tools)
 
         # Configure the backend with tools and config
         await self.backend.configure(tool_defs, config)
