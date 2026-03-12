@@ -10,7 +10,7 @@ interface GeneratedTool {
   name: string;
   description: string;
   type: string;
-  code: string;
+  example_usage: string;
   parameters: Record<string, unknown>;
 }
 
@@ -24,7 +24,7 @@ export function ToolsSection({ domainId, tools, onMutate }: ToolsSectionProps) {
   const [showForm, setShowForm] = useState(false);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [code, setCode] = useState("");
+  const [exampleUsage, setExampleUsage] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleAdd = async (e: React.FormEvent) => {
@@ -35,13 +35,13 @@ export function ToolsSection({ domainId, tools, onMutate }: ToolsSectionProps) {
       await addDomainTool(domainId, {
         name: name.trim(),
         description,
-        code,
+        example_usage: exampleUsage,
         type: "custom",
         created_by: "human",
       });
       setName("");
       setDescription("");
-      setCode("");
+      setExampleUsage("");
       setShowForm(false);
       onMutate();
     } finally {
@@ -106,9 +106,9 @@ export function ToolsSection({ domainId, tools, onMutate }: ToolsSectionProps) {
             className="bg-secondary/50"
           />
           <Textarea
-            placeholder="Python code (optional)"
-            value={code}
-            onChange={(e) => setCode(e.target.value)}
+            placeholder="Example usage (optional Python snippet)"
+            value={exampleUsage}
+            onChange={(e) => setExampleUsage(e.target.value)}
             className="bg-secondary/50 min-h-[80px] resize-none font-mono text-xs"
           />
           <div className="flex gap-2">
@@ -180,7 +180,7 @@ function GenerateToolsButton({
         name: tool.name,
         description: tool.description,
         type: tool.type,
-        code: tool.code,
+        example_usage: tool.example_usage,
         parameters: tool.parameters,
         created_by: "ai",
       });
@@ -231,9 +231,9 @@ function GenerateToolsButton({
               </Button>
             </div>
             <p className="text-xs text-muted-foreground">{tool.description}</p>
-            {tool.code && (
+            {tool.example_usage && (
               <pre className="text-[10px] font-mono bg-secondary/50 rounded p-2 max-h-[120px] overflow-auto">
-                {tool.code}
+                {tool.example_usage}
               </pre>
             )}
           </div>

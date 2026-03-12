@@ -15,7 +15,6 @@ from agentml.api.routers import (
     experiments,
     health,
     knowledge,
-    tasks,
     tracking,
 )
 from agentml.config.settings import Settings
@@ -68,7 +67,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # Register routers
     app.include_router(health.router)
     app.include_router(domains.router)
-    app.include_router(tasks.router)
     app.include_router(experiments.router)
     app.include_router(knowledge.router)
     app.include_router(tracking.router)

@@ -6,12 +6,15 @@ from agentml.compute.local import LocalCompute
 from agentml.config.settings import Settings
 from agentml.interfaces.memory_store import MemoryStore
 from agentml.interfaces.tracking import TrackingConnector
+from agentml.runtime.keyword_linker import KeywordKnowledgeLinker
 from agentml.runtime.lab import LabEnvironment
 from agentml.sandbox.local import LocalSandbox
-from agentml.storage.local_artifact import LocalArtifactStore
-from agentml.storage.local_domain import LocalDomainStore
-from agentml.storage.local_experiment import LocalExperimentStore
-from agentml.storage.local_knowledge_link import LocalKnowledgeLinkStore
+from agentml.storage.local import (
+    LocalArtifactStore,
+    LocalDomainStore,
+    LocalExperimentStore,
+    LocalKnowledgeLinkStore,
+)
 from agentml.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -57,7 +60,7 @@ def _build_memory(settings: Settings) -> MemoryStore:
     backend = settings.memory.backend
 
     if backend == "local":
-        from agentml.storage.local_memory import LocalMemoryStore
+        from agentml.storage.local import LocalMemoryStore
 
         base = Path(settings.storage.base_dir) / "memory"
         logger.info("memory_backend", backend="local", path=str(base))
@@ -77,13 +80,17 @@ def build_lab(settings: Settings) -> LabEnvironment:
     """
     base = Path(settings.storage.base_dir)
 
+    memory_store = _build_memory(settings)
+    knowledge_link_store = LocalKnowledgeLinkStore(base_dir=base / "knowledge_links")
+
     return LabEnvironment(
         compute=LocalCompute(),
         sandbox=LocalSandbox(timeout=settings.sandbox.timeout),
         experiment_store=LocalExperimentStore(base_dir=base / "experiments"),
         artifact_store=LocalArtifactStore(base_dir=base / "artifacts"),
-        memory_store=_build_memory(settings),
+        memory_store=memory_store,
         tracking=_build_tracking(settings),
         domain_store=LocalDomainStore(base_dir=base / "domains"),
-        knowledge_link_store=LocalKnowledgeLinkStore(base_dir=base / "knowledge_links"),
+        knowledge_link_store=knowledge_link_store,
+        knowledge_linker=KeywordKnowledgeLinker(memory_store, knowledge_link_store),
     )

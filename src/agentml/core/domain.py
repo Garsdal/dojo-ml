@@ -29,14 +29,18 @@ class ToolType(StrEnum):
 
 @dataclass
 class DomainTool:
-    """A domain-specific tool definition."""
+    """A domain-specific tool descriptor.
+
+    Purely semantic — tells the agent what operations are available.
+    The agent decides how to use them via its own code generation.
+    """
 
     id: str = field(default_factory=generate_id)
     name: str = ""
     description: str = ""
     type: ToolType = ToolType.CUSTOM
-    code: str = ""
     parameters: dict[str, Any] = field(default_factory=dict)
+    example_usage: str = ""
     created_by: str = "human"
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 

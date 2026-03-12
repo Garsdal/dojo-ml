@@ -1,12 +1,11 @@
-"""Unit tests for KnowledgeLinker — the knowledge compression/linking service."""
+"""Unit tests for KnowledgeLinker — the immutable knowledge linking service."""
 
 from pathlib import Path
 
 import pytest
 
-from agentml.runtime.knowledge_linker import KnowledgeLinker
-from agentml.storage.local_knowledge_link import LocalKnowledgeLinkStore
-from agentml.storage.local_memory import LocalMemoryStore
+from agentml.runtime.keyword_linker import KeywordKnowledgeLinker
+from agentml.storage.local import LocalKnowledgeLinkStore, LocalMemoryStore
 
 
 @pytest.fixture
@@ -21,10 +20,10 @@ def link_store(tmp_dir: Path):
 
 @pytest.fixture
 def linker(memory_store, link_store):
-    return KnowledgeLinker(memory_store, link_store)
+    return KeywordKnowledgeLinker(memory_store, link_store)
 
 
-async def test_produce_creates_new_atom(linker: KnowledgeLinker, memory_store):
+async def test_produce_creates_new_atom(linker: KeywordKnowledgeLinker, memory_store):
     result = await linker.produce_knowledge(
         context="Housing price prediction experiment",
         claim="Random forests outperform linear regression on tabular housing data",
@@ -36,7 +35,7 @@ async def test_produce_creates_new_atom(linker: KnowledgeLinker, memory_store):
     assert result.action == "created"
     assert result.version == 1
     assert result.confidence == 0.85
-    assert result.merged_with is None
+    assert result.related_to is None
 
     # Atom should exist in memory store
     atoms = await memory_store.list()
@@ -44,9 +43,10 @@ async def test_produce_creates_new_atom(linker: KnowledgeLinker, memory_store):
     assert atoms[0].id == result.atom_id
 
 
-async def test_produce_merges_similar_atoms(linker: KnowledgeLinker, memory_store):
+async def test_similar_atoms_are_not_merged(linker: KeywordKnowledgeLinker, memory_store):
+    """Similar findings create separate atoms with RELATED_TO links, not merges."""
     # Create an initial atom
-    await linker.produce_knowledge(
+    result1 = await linker.produce_knowledge(
         context="Housing price prediction experiment with gradient boosting",
         claim="Random forests outperform linear regression on tabular housing data",
         confidence=0.8,
@@ -54,8 +54,8 @@ async def test_produce_merges_similar_atoms(linker: KnowledgeLinker, memory_stor
         domain_id="domain-001",
     )
 
-    # Produce a similar finding — should merge
-    result = await linker.produce_knowledge(
+    # Produce a similar finding — should NOT merge, should create a new atom
+    result2 = await linker.produce_knowledge(
         context="Extended housing price prediction experiment with cross-validation",
         claim="Random forests outperform linear regression on tabular housing data significantly",
         confidence=0.9,
@@ -63,18 +63,22 @@ async def test_produce_merges_similar_atoms(linker: KnowledgeLinker, memory_stor
         domain_id="domain-001",
     )
 
-    assert result.action == "merged"
-    assert result.version == 2
-    # Merged confidence is avg of old (0.8) and new (0.9) = 0.85
-    assert result.confidence == pytest.approx(0.85)
+    # Both should be "created", never "merged"
+    assert result1.action == "created"
+    assert result2.action == "created"
+    assert result2.version == 1
 
-    # Only one atom in store (merged)
+    # Two separate atoms in store
     atoms = await memory_store.list()
-    assert len(atoms) == 1
+    assert len(atoms) == 2
+
+    # Second atom should have a RELATED_TO link to the first
+    assert result2.related_to is not None
+    assert result1.atom_id in result2.related_to
 
 
-async def test_produce_distinct_atoms_not_merged(linker: KnowledgeLinker, memory_store):
-    await linker.produce_knowledge(
+async def test_produce_distinct_atoms_not_related(linker: KeywordKnowledgeLinker, memory_store):
+    result1 = await linker.produce_knowledge(
         context="Image classification with convolutional neural networks",
         claim="CNNs achieve 95% accuracy on CIFAR-10 with data augmentation enabled",
         confidence=0.9,
@@ -82,7 +86,7 @@ async def test_produce_distinct_atoms_not_merged(linker: KnowledgeLinker, memory
         domain_id="domain-001",
     )
 
-    await linker.produce_knowledge(
+    result2 = await linker.produce_knowledge(
         context="Natural language processing with transformers",
         claim="BERT fine-tuning achieves state-of-the-art on sentiment analysis benchmarks",
         confidence=0.85,
@@ -93,8 +97,12 @@ async def test_produce_distinct_atoms_not_merged(linker: KnowledgeLinker, memory
     atoms = await memory_store.list()
     assert len(atoms) == 2
 
+    # No RELATED_TO links for distinct atoms
+    assert result1.related_to is None
+    assert result2.related_to is None
 
-async def test_links_created_for_new_atom(linker: KnowledgeLinker, link_store):
+
+async def test_links_created_for_new_atom(linker: KeywordKnowledgeLinker, link_store):
     result = await linker.produce_knowledge(
         context="Testing link creation for classification experiments",
         claim="Gradient boosting consistently outperforms decision trees on structured data",
@@ -109,22 +117,35 @@ async def test_links_created_for_new_atom(linker: KnowledgeLinker, link_store):
     assert links[0].link_type == "created_by"
 
 
-async def test_snapshot_created_on_produce(linker: KnowledgeLinker, link_store):
-    result = await linker.produce_knowledge(
-        context="Snapshot creation test for experimental results tracking",
-        claim="XGBoost with tuned hyperparameters beats default random forest configuration",
-        confidence=0.7,
+async def test_related_to_links_created(linker: KeywordKnowledgeLinker, link_store):
+    """When a similar atom exists, RELATED_TO links are created."""
+    result1 = await linker.produce_knowledge(
+        context="Housing price prediction experiment with gradient boosting models",
+        claim="Random forests outperform linear regression on tabular housing data",
+        confidence=0.8,
         experiment_id="exp-001",
         domain_id="domain-001",
     )
 
-    snapshots = await link_store.get_snapshots(result.atom_id)
-    assert len(snapshots) == 1
-    assert snapshots[0].version == 1
-    assert snapshots[0].confidence == pytest.approx(0.7)
+    result2 = await linker.produce_knowledge(
+        context="Extended housing price prediction experiment with cross-validation",
+        claim="Random forests outperform linear regression on tabular housing data significantly",
+        confidence=0.9,
+        experiment_id="exp-002",
+        domain_id="domain-001",
+    )
+
+    links = await link_store.get_links_for_atom(result2.atom_id)
+    # Should have CREATED_BY + RELATED_TO
+    link_types = [lk.link_type for lk in links]
+    assert "created_by" in link_types
+    assert "related_to" in link_types
+
+    related_link = next(lk for lk in links if lk.link_type == "related_to")
+    assert related_link.related_atom_id == result1.atom_id
 
 
-async def test_get_domain_knowledge(linker: KnowledgeLinker):
+async def test_get_domain_knowledge(linker: KeywordKnowledgeLinker):
     await linker.produce_knowledge(
         context="Domain knowledge retrieval test with image experiments",
         claim="CNNs require significant GPU memory for large batch training sizes",
@@ -143,47 +164,15 @@ async def test_get_domain_knowledge(linker: KnowledgeLinker):
     assert len(d2_atoms) == 1
 
 
-async def test_get_evolution(linker: KnowledgeLinker):
-    await linker.produce_knowledge(
-        context="Evolution tracking test with gradient boosting experiments",
-        claim="XGBoost with tuned learning rate of 0.01 outperforms default random forest model",
-        confidence=0.6,
-        experiment_id="exp-001",
-        domain_id="domain-001",
-    )
-    await linker.produce_knowledge(
-        context="Evolution tracking continued with additional gradient boosting experiments",
-        claim="XGBoost with tuned learning rate of 0.01 outperforms default random forest model significantly",
-        confidence=0.9,
-        experiment_id="exp-002",
-        domain_id="domain-001",
-    )
-
-    snapshots = await linker.get_evolution("domain-001")
-    assert len(snapshots) >= 2
-    # Snapshots should be sorted by timestamp
-    for i in range(len(snapshots) - 1):
-        assert snapshots[i].timestamp <= snapshots[i + 1].timestamp
-
-
-async def test_get_atom_history(linker: KnowledgeLinker, memory_store):
-    # Create and then merge to get version history
-    result1 = await linker.produce_knowledge(
-        context="Version history test with neural network architecture search",
-        claim="ResNet-50 achieves 92% accuracy on custom image classification dataset",
+async def test_get_atom_links(linker: KeywordKnowledgeLinker):
+    result = await linker.produce_knowledge(
+        context="Atom links test for experimental results tracking",
+        claim="XGBoost with tuned hyperparameters beats default random forest configuration",
         confidence=0.7,
         experiment_id="exp-001",
         domain_id="domain-001",
     )
-    await linker.produce_knowledge(
-        context="Version history continued with advanced neural network architecture search",
-        claim="ResNet-50 achieves 92% accuracy on custom image classification dataset with dropout",
-        confidence=0.85,
-        experiment_id="exp-002",
-        domain_id="domain-001",
-    )
 
-    history = await linker.get_atom_history(result1.atom_id)
-    assert len(history) == 2
-    assert history[0].version == 1
-    assert history[1].version == 2
+    links = await linker.get_atom_links(result.atom_id)
+    assert len(links) >= 1
+    assert links[0].atom_id == result.atom_id

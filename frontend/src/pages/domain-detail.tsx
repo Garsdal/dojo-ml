@@ -3,7 +3,6 @@ import { useDomain, updateDomain } from "@/hooks/use-domain";
 import { useDomainExperiments } from "@/hooks/use-domain-experiments";
 import { useDomainKnowledge } from "@/hooks/use-domain-knowledge";
 import { useDomainMetrics } from "@/hooks/use-domain-metrics";
-import { useKnowledgeEvolution } from "@/hooks/use-knowledge-evolution";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -13,7 +12,6 @@ import { KnowledgeSection } from "@/components/domains/knowledge-section";
 import { ToolsSection } from "@/components/domains/tools-section";
 import { AgentSection } from "@/components/domains/agent-section";
 import { MetricEvolutionChart } from "@/components/charts/metric-evolution-chart";
-import { KnowledgeEvolutionChart } from "@/components/charts/knowledge-evolution-chart";
 
 export default function DomainDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -22,7 +20,6 @@ export default function DomainDetailPage() {
   const { data: experiments, isLoading: expLoading } = useDomainExperiments(id);
   const { data: knowledge, isLoading: knLoading } = useDomainKnowledge(id);
   const { data: metrics, isLoading: metLoading } = useDomainMetrics(id);
-  const { data: evolution, isLoading: evoLoading } = useKnowledgeEvolution(id);
 
   if (isLoading) {
     return <p className="text-sm text-muted-foreground">Loading domain…</p>;
@@ -155,20 +152,6 @@ export default function DomainDetailPage() {
             </CardHeader>
             <CardContent>
               <KnowledgeSection atoms={knowledge} isLoading={knLoading} />
-            </CardContent>
-          </Card>
-
-          <Card className="rounded-xl">
-            <CardHeader>
-              <CardTitle className="text-sm font-medium text-muted-foreground">
-                Knowledge Evolution
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <KnowledgeEvolutionChart
-                data={evolution}
-                isLoading={evoLoading}
-              />
             </CardContent>
           </Card>
         </TabsContent>

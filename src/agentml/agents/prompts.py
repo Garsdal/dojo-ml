@@ -103,7 +103,9 @@ def _build_domain_section(domain: Domain | None) -> str:
     if domain.tools:
         lines.append("\n### Domain-specific tools")
         for tool in domain.tools:
-            lines.append(f"- **domain_{tool.name}** — {tool.description}")
+            lines.append(f"- **{tool.name}** — {tool.description}")
+            if tool.example_usage:
+                lines.append(f"  Example usage:\n```python\n{tool.example_usage}\n```")
     if domain.config:
         lines.append(f"\n### Domain configuration\n{domain.config}")
     return "\n".join(lines)

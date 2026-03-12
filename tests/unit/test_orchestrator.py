@@ -14,12 +14,12 @@ class TestAgentOrchestrator:
         backend = StubAgentBackend()
         orchestrator = AgentOrchestrator(lab, backend)
 
-        run = await orchestrator.start("test prompt")
+        run = await orchestrator.start("test prompt", domain_id="test-domain")
 
         assert run.status == RunStatus.RUNNING
         assert run.prompt == "test prompt"
         assert run.started_at is not None
-        assert run.domain_id  # Should have a generated domain ID
+        assert run.domain_id == "test-domain"
 
     async def test_start_with_custom_domain_id(self, lab):
         backend = StubAgentBackend()
@@ -34,7 +34,7 @@ class TestAgentOrchestrator:
         orchestrator = AgentOrchestrator(lab, backend)
 
         hints = [ToolHint(name="fetch_data", description="Load dataset", source="http://test")]
-        run = await orchestrator.start("test", tool_hints=hints)
+        run = await orchestrator.start("test", domain_id="test-domain", tool_hints=hints)
 
         assert len(run.tool_hints) == 1
         assert run.tool_hints[0].name == "fetch_data"
@@ -45,7 +45,7 @@ class TestAgentOrchestrator:
         backend = StubAgentBackend()
         orchestrator = AgentOrchestrator(lab, backend)
 
-        run = await orchestrator.start("test prompt")
+        run = await orchestrator.start("test prompt", domain_id="test-domain")
         await orchestrator.execute(run)
 
         assert run.status == RunStatus.COMPLETED
@@ -69,7 +69,7 @@ class TestAgentOrchestrator:
         backend = StubAgentBackend(events=events)
         orchestrator = AgentOrchestrator(lab, backend)
 
-        run = await orchestrator.start("test")
+        run = await orchestrator.start("test", domain_id="test-domain")
         await orchestrator.execute(run)
 
         assert run.result is not None
@@ -85,7 +85,7 @@ class TestAgentOrchestrator:
         backend = StubAgentBackend(events=events)
         orchestrator = AgentOrchestrator(lab, backend)
 
-        run = await orchestrator.start("test")
+        run = await orchestrator.start("test", domain_id="test-domain")
         await orchestrator.execute(run)
 
         assert run.status == RunStatus.FAILED
@@ -101,7 +101,7 @@ class TestAgentOrchestrator:
         backend = StubAgentBackend(events=events)
         orchestrator = AgentOrchestrator(lab, backend)
 
-        run = await orchestrator.start("test")
+        run = await orchestrator.start("test", domain_id="test-domain")
         await orchestrator.execute(run)
 
         assert run.status == RunStatus.FAILED
@@ -110,7 +110,7 @@ class TestAgentOrchestrator:
         backend = StubAgentBackend()
         orchestrator = AgentOrchestrator(lab, backend)
 
-        run = await orchestrator.start("test")
+        run = await orchestrator.start("test", domain_id="test-domain")
         await orchestrator.stop()
 
         assert run.status == RunStatus.STOPPED
@@ -127,7 +127,7 @@ class TestAgentOrchestrator:
             cwd="/tmp/test",
         )
 
-        run = await orchestrator.start("test")
+        run = await orchestrator.start("test", domain_id="test-domain")
 
         assert run.config.max_turns == 10
         assert run.config.max_budget_usd == pytest.approx(1.5)
@@ -147,7 +147,7 @@ class TestAgentOrchestrator:
         backend = StubAgentBackend()
         orchestrator = AgentOrchestrator(lab, backend)
 
-        run = await orchestrator.start("pipeline test")
+        run = await orchestrator.start("pipeline test", domain_id="test-domain")
         await orchestrator.execute(run)
 
         assert run.status == RunStatus.COMPLETED
@@ -159,7 +159,7 @@ class TestAgentOrchestrator:
         backend = StubAgentBackend()
         orchestrator = AgentOrchestrator(lab, backend)
 
-        run = await orchestrator.start("event types test")
+        run = await orchestrator.start("event types test", domain_id="test-domain")
         await orchestrator.execute(run)
 
         event_types = [e.event_type for e in run.events]

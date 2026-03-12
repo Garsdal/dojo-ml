@@ -2,7 +2,7 @@
 
 from abc import ABC, abstractmethod
 
-from agentml.core.knowledge_link import KnowledgeLink, KnowledgeSnapshot
+from agentml.core.knowledge_link import KnowledgeLink
 
 
 class KnowledgeLinkStore(ABC):
@@ -31,14 +31,4 @@ class KnowledgeLinkStore(ABC):
     @abstractmethod
     async def get_links_for_domain(self, domain_id: str) -> list[KnowledgeLink]:
         """Get all links for a domain."""
-        ...
-
-    @abstractmethod
-    async def save_snapshot(self, snapshot: KnowledgeSnapshot) -> str:
-        """Save a knowledge version snapshot."""
-        ...
-
-    @abstractmethod
-    async def get_snapshots(self, atom_id: str) -> list[KnowledgeSnapshot]:
-        """Get all version snapshots for an atom."""
         ...

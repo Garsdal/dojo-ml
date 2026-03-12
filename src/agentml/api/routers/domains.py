@@ -7,7 +7,6 @@ from pydantic import BaseModel
 
 from agentml.core.domain import Domain, DomainStatus, DomainTool, ToolType
 from agentml.runtime.domain_service import DomainService
-from agentml.runtime.knowledge_linker import KnowledgeLinker
 from agentml.runtime.lab import LabEnvironment
 from agentml.tools.tool_generation import (
     build_tool_generation_prompt,
@@ -28,7 +27,7 @@ class DomainToolRequest(BaseModel):
     name: str
     description: str = ""
     type: str = "custom"
-    code: str = ""
+    example_usage: str = ""
     parameters: dict[str, Any] = {}
     created_by: str = "human"
 
@@ -38,7 +37,7 @@ class DomainToolResponse(BaseModel):
     name: str
     description: str
     type: str
-    code: str
+    example_usage: str
     parameters: dict[str, Any]
     created_by: str
     created_at: str
@@ -82,7 +81,7 @@ def _tool_response(tool: DomainTool) -> DomainToolResponse:
         name=tool.name,
         description=tool.description,
         type=tool.type.value,
-        code=tool.code,
+        example_usage=tool.example_usage,
         parameters=tool.parameters,
         created_by=tool.created_by,
         created_at=tool.created_at.isoformat(),
@@ -118,7 +117,7 @@ async def create_domain(body: CreateDomainRequest, request: Request) -> DomainRe
             name=t.name,
             description=t.description,
             type=ToolType(t.type),
-            code=t.code,
+            example_usage=t.example_usage,
             parameters=t.parameters,
             created_by=t.created_by,
         )
@@ -206,7 +205,7 @@ async def add_domain_tool(
         name=body.name,
         description=body.description,
         type=ToolType(body.type),
-        code=body.code,
+        example_usage=body.example_usage,
         parameters=body.parameters,
         created_by=body.created_by,
     )
@@ -282,21 +281,12 @@ async def domain_metrics_evolution(domain_id: str, request: Request) -> dict:
 # --- Domain Knowledge ---
 
 
-def _get_linker(lab: LabEnvironment) -> KnowledgeLinker | None:
-    if lab.knowledge_link_store is not None:
-        return KnowledgeLinker(lab.memory_store, lab.knowledge_link_store)
-    return None
-
-
 @router.get("/{domain_id}/knowledge")
 async def list_domain_knowledge(domain_id: str, request: Request) -> list[dict]:
     """All knowledge atoms linked to a domain."""
     lab = _get_lab(request)
-    linker = _get_linker(lab)
-    if linker is None:
-        return []
 
-    atoms = await linker.get_domain_knowledge(domain_id)
+    atoms = await lab.knowledge_linker.get_domain_knowledge(domain_id)
     return [
         {
             "id": a.id,
@@ -311,32 +301,6 @@ async def list_domain_knowledge(domain_id: str, request: Request) -> list[dict]:
     ]
 
 
-@router.get("/{domain_id}/knowledge/evolution")
-async def domain_knowledge_evolution(domain_id: str, request: Request) -> dict:
-    """Knowledge evolution snapshots for a domain over time."""
-    lab = _get_lab(request)
-    linker = _get_linker(lab)
-    if linker is None:
-        return {"domain_id": domain_id, "snapshots": []}
-
-    snapshots = await linker.get_evolution(domain_id)
-    return {
-        "domain_id": domain_id,
-        "snapshots": [
-            {
-                "id": s.id,
-                "atom_id": s.atom_id,
-                "version": s.version,
-                "confidence": s.confidence,
-                "claim": s.claim,
-                "evidence_ids": s.evidence_ids,
-                "timestamp": s.timestamp.isoformat(),
-            }
-            for s in snapshots
-        ],
-    }
-
-
 # --- AI Tool Generation ---
 
 
@@ -348,7 +312,7 @@ class GeneratedToolResponse(BaseModel):
     name: str
     description: str
     type: str
-    code: str
+    example_usage: str
     parameters: dict[str, Any]
 
 
@@ -411,7 +375,7 @@ async def generate_tools(
                 name=t["name"],
                 description=t["description"],
                 type=t["type"],
-                code=t["code"],
+                example_usage=t["example_usage"],
                 parameters=t["parameters"],
             )
             for t in tool_dicts

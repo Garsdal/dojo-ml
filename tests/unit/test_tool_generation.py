@@ -46,7 +46,7 @@ def test_parse_generated_tools_json():
     "description": "Load a CSV file",
     "type": "data_loader",
     "parameters": {"file_path": {"type": "string"}},
-    "code": "import pandas as pd\\ndef main(args):\\n    df = pd.read_csv(args['file_path'])"
+    "example_usage": "import pandas as pd\\ndf = pd.read_csv(args['file_path'])"
   }
 ]
 ```
@@ -58,7 +58,7 @@ def test_parse_generated_tools_json():
 
 
 def test_parse_generated_tools_bare_json():
-    raw = '[{"name": "my_tool", "description": "test", "type": "custom", "code": "", "parameters": {}}]'
+    raw = '[{"name": "my_tool", "description": "test", "type": "custom", "example_usage": "", "parameters": {}}]'
     tools = parse_generated_tools(raw)
     assert len(tools) == 1
     assert tools[0]["name"] == "my_tool"
@@ -75,19 +75,19 @@ def test_parse_generated_tools_invalid_json():
 
 
 def test_parse_validates_name():
-    raw = '[{"description": "no name", "type": "custom", "code": "", "parameters": {}}]'
+    raw = '[{"description": "no name", "type": "custom", "example_usage": "", "parameters": {}}]'
     with pytest.raises(ValueError, match="'name' is required"):
         parse_generated_tools(raw)
 
 
 def test_parse_sanitizes_name():
-    raw = '[{"name": "My Tool Name!", "description": "test", "type": "custom", "code": "", "parameters": {}}]'
+    raw = '[{"name": "My Tool Name!", "description": "test", "type": "custom", "example_usage": "", "parameters": {}}]'
     tools = parse_generated_tools(raw)
     assert tools[0]["name"] == "my_tool_name_"
 
 
 def test_parse_invalid_type_defaults_to_custom():
-    raw = '[{"name": "tool", "description": "test", "type": "invalid_type", "code": "", "parameters": {}}]'
+    raw = '[{"name": "tool", "description": "test", "type": "invalid_type", "example_usage": "", "parameters": {}}]'
     tools = parse_generated_tools(raw)
     assert tools[0]["type"] == "custom"
 
@@ -98,7 +98,7 @@ def test_dicts_to_domain_tools():
             "name": "load_data",
             "description": "Load data from file",
             "type": "data_loader",
-            "code": "def main(args): pass",
+            "example_usage": "df = pd.read_csv(path)",
             "parameters": {"path": {"type": "string"}},
         }
     ]
@@ -113,8 +113,8 @@ def test_dicts_to_domain_tools():
 def test_parse_multiple_tools():
     raw = """```json
 [
-  {"name": "loader", "description": "Load", "type": "data_loader", "code": "def main(a): pass", "parameters": {}},
-  {"name": "eval", "description": "Evaluate", "type": "evaluator", "code": "def main(a): pass", "parameters": {}}
+  {"name": "loader", "description": "Load", "type": "data_loader", "example_usage": "load()", "parameters": {}},
+  {"name": "eval", "description": "Evaluate", "type": "evaluator", "example_usage": "evaluate()", "parameters": {}}
 ]
 ```"""
     tools = parse_generated_tools(raw)

@@ -12,7 +12,7 @@ export interface DomainTool {
   name: string;
   description: string;
   type: string;
-  code: string;
+  example_usage: string;
   parameters: Record<string, unknown>;
   created_by: string;
   created_at: string;
@@ -33,12 +33,6 @@ export interface Domain {
 }
 
 // --- Experiments ---
-
-export interface ExperimentSummary {
-  id: string;
-  state: string;
-  metrics: Record<string, number> | null;
-}
 
 export interface Experiment {
   id: string;
@@ -68,31 +62,21 @@ export interface KnowledgeLink {
   experiment_id: string;
   domain_id: string;
   link_type: string;
+  related_atom_id: string | null;
   created_at: string;
-}
-
-export interface KnowledgeSnapshot {
-  id: string;
-  atom_id: string;
-  version: number;
-  confidence: number;
-  claim: string;
-  evidence_ids: string[];
-  timestamp: string;
 }
 
 export interface KnowledgeDetail {
   atom: KnowledgeAtom;
   links: KnowledgeLink[];
-  history: KnowledgeSnapshot[];
 }
 
 export interface LinkingResult {
   atom_id: string;
-  action: "created" | "merged";
+  action: "created";
   version: number;
   confidence: number;
-  merged_with: string | null;
+  related_to: string[] | null;
 }
 
 // --- Metrics ---
@@ -143,15 +127,4 @@ export interface AppConfig {
   storage: { base_dir: string };
   llm: { provider: string; model: string };
   tracking: { enabled: boolean };
-}
-
-// --- Legacy (backward compat) ---
-
-export interface Task {
-  id: string;
-  prompt: string;
-  status: "pending" | "running" | "completed" | "failed";
-  summary: string | null;
-  experiments: ExperimentSummary[];
-  metrics: Record<string, number> | null;
 }

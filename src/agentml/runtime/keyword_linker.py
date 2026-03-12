@@ -1,18 +1,16 @@
-"""Knowledge linker — drives the linking process.
+"""Keyword-overlap knowledge linker — default implementation.
 
-Every knowledge write goes through here. The agent calls
-produce_knowledge(finding, experiment_id, domain_id) → linker always creates a
-new immutable atom, finds similar existing atoms, and creates relational links.
-No merging, no snapshots — every raw finding is preserved.
+Uses keyword overlap ratio (≥40% of the smaller word set) to find
+similar existing atoms. Every finding is stored as a new immutable atom;
+similar atoms are linked with RELATED_TO links.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 from agentml.core.knowledge import KnowledgeAtom
 from agentml.core.knowledge_link import KnowledgeLink, LinkType
 from agentml.interfaces.knowledge_link_store import KnowledgeLinkStore
+from agentml.interfaces.knowledge_linker import KnowledgeLinker, LinkingResult
 from agentml.interfaces.memory_store import MemoryStore
 from agentml.utils.logging import get_logger
 
@@ -24,19 +22,8 @@ _MATCH_THRESHOLD = 0.4
 _MIN_OVERLAP_WORDS = 3
 
 
-@dataclass
-class LinkingResult:
-    """Result of the knowledge linking process."""
-
-    atom_id: str
-    action: str  # always "created"
-    version: int  # always 1
-    confidence: float
-    related_to: list[str] | None = None  # IDs of similar existing atoms
-
-
-class KnowledgeLinker:
-    """Drives the knowledge linking process.
+class KeywordKnowledgeLinker(KnowledgeLinker):
+    """Knowledge linker using keyword-overlap heuristic.
 
     When an agent produces a finding, the linker:
     1. Always creates a new immutable atom
@@ -66,7 +53,6 @@ class KnowledgeLinker:
     ) -> LinkingResult:
         """Produce a knowledge atom through the linking process.
 
-        This is the single entry point for all knowledge creation.
         Always creates a new immutable atom — never merges.
         """
         evidence = evidence_ids or []
@@ -83,7 +69,7 @@ class KnowledgeLinker:
         await self._memory.add(atom)
 
         # 2. Find similar existing atoms (for grouping, not merging)
-        similar = await self._find_similar(context, claim, exclude_id=atom.id)
+        similar = await self.find_similar(context, claim, exclude_id=atom.id)
 
         # 3. Create CREATED_BY link from this atom to the experiment/domain
         if experiment_id or domain_id:
@@ -123,7 +109,7 @@ class KnowledgeLinker:
             related_to=related_ids or None,
         )
 
-    async def _find_similar(
+    async def find_similar(
         self, context: str, claim: str, *, exclude_id: str = ""
     ) -> list[KnowledgeAtom]:
         """Search existing atoms for semantic overlap using keyword matching."""
@@ -150,10 +136,8 @@ class KnowledgeLinker:
             return False
 
         overlap = new_words & existing_words
-        # Require minimum number of overlapping words to avoid false matches on short texts
         if len(overlap) < _MIN_OVERLAP_WORDS:
             return False
-        # Use the smaller set for ratio to avoid penalizing longer texts
         smaller = min(len(new_words), len(existing_words))
         ratio = len(overlap) / smaller if smaller > 0 else 0.0
 

@@ -7,9 +7,7 @@ import pytest
 from agentml.core.experiment import Experiment, ExperimentResult, Hypothesis
 from agentml.core.knowledge import KnowledgeAtom
 from agentml.core.state_machine import ExperimentState
-from agentml.storage.local_artifact import LocalArtifactStore
-from agentml.storage.local_experiment import LocalExperimentStore
-from agentml.storage.local_memory import LocalMemoryStore
+from agentml.storage.local import LocalArtifactStore, LocalExperimentStore, LocalMemoryStore
 
 
 @pytest.fixture

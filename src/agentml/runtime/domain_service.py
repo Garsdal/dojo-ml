@@ -17,28 +17,20 @@ class DomainService:
 
     async def create(self, domain: Domain) -> str:
         """Create a new domain."""
-        if not self.lab.domain_store:
-            raise RuntimeError("DomainStore not configured")
         domain_id = await self.lab.domain_store.save(domain)
         logger.info("domain_created", domain_id=domain_id, name=domain.name)
         return domain_id
 
     async def get(self, domain_id: str) -> Domain | None:
         """Get a domain by ID."""
-        if not self.lab.domain_store:
-            raise RuntimeError("DomainStore not configured")
         return await self.lab.domain_store.load(domain_id)
 
     async def list(self) -> list[Domain]:
         """List all domains."""
-        if not self.lab.domain_store:
-            raise RuntimeError("DomainStore not configured")
         return await self.lab.domain_store.list()
 
     async def update(self, domain: Domain) -> str:
         """Update an existing domain."""
-        if not self.lab.domain_store:
-            raise RuntimeError("DomainStore not configured")
         domain.updated_at = datetime.now(UTC)
         await self.lab.domain_store.update(domain)
         logger.info("domain_updated", domain_id=domain.id)
@@ -46,8 +38,6 @@ class DomainService:
 
     async def delete(self, domain_id: str) -> bool:
         """Delete a domain."""
-        if not self.lab.domain_store:
-            raise RuntimeError("DomainStore not configured")
         deleted = await self.lab.domain_store.delete(domain_id)
         if deleted:
             logger.info("domain_deleted", domain_id=domain_id)

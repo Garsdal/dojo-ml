@@ -7,7 +7,7 @@ import pytest
 from agentml.core.domain import Domain, DomainStatus, DomainTool, ToolType
 from agentml.runtime.domain_service import DomainService
 from agentml.runtime.lab import LabEnvironment
-from agentml.storage.local_domain import LocalDomainStore
+from agentml.storage.local import LocalDomainStore
 
 
 @pytest.fixture
@@ -65,7 +65,7 @@ async def test_domain_with_tools(domain_store: LocalDomainStore):
         name="load_data",
         description="Load the dataset",
         type=ToolType.DATA_LOADER,
-        code="def main(args): return {'data': 'loaded'}",
+        example_usage="import pandas as pd\ndf = pd.read_csv('data.csv')",
         parameters={"type": "object", "properties": {}},
         created_by="human",
     )

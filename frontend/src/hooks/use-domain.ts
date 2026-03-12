@@ -30,7 +30,7 @@ export async function addDomainTool(
     name: string;
     description?: string;
     type?: string;
-    code?: string;
+    example_usage?: string;
     parameters?: Record<string, unknown>;
     created_by?: string;
   },

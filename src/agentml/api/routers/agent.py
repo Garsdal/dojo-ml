@@ -11,6 +11,7 @@ from agentml.agents.factory import create_agent_backend
 from agentml.agents.orchestrator import AgentOrchestrator
 from agentml.agents.types import AgentRun, RunStatus, ToolHint
 from agentml.runtime.lab import LabEnvironment
+from agentml.utils.ids import generate_id
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 
@@ -95,7 +96,9 @@ async def start_run(body: StartRunRequest, request: Request) -> AgentRunResponse
     ]
 
     run = await orchestrator.start(
-        prompt=body.prompt, domain_id=body.domain_id, tool_hints=tool_hints
+        prompt=body.prompt,
+        domain_id=body.domain_id or generate_id(),
+        tool_hints=tool_hints,
     )
 
     _runs[run.id] = run

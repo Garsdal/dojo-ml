@@ -55,7 +55,7 @@ class LocalDomainStore(DomainStore):
             name=data.get("name", ""),
             description=data.get("description", ""),
             type=ToolType(data.get("type", "custom")),
-            code=data.get("code", ""),
+            example_usage=data.get("example_usage", ""),
             parameters=data.get("parameters", {}),
             created_by=data.get("created_by", "human"),
             created_at=datetime.fromisoformat(data["created_at"])

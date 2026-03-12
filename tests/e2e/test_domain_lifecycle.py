@@ -65,7 +65,7 @@ async def test_domain_tools(client: AsyncClient):
             "name": "load_data",
             "description": "Load the training dataset",
             "type": "data_loader",
-            "code": "def main(args): return {'rows': 100}",
+            "example_usage": "import pandas as pd\ndf = pd.read_csv('data.csv')",
         },
     )
     assert resp.status_code == 201
@@ -124,10 +124,6 @@ async def test_domain_knowledge(client: AsyncClient):
     assert resp.status_code == 200
     assert resp.json() == []
 
-    resp = await client.get(f"/domains/{domain_id}/knowledge/evolution")
-    assert resp.status_code == 200
-    assert resp.json()["snapshots"] == []
-
 
 async def test_knowledge_with_domain_filter(client: AsyncClient):
     """Knowledge endpoints support domain_id filtering."""
@@ -155,21 +151,19 @@ async def test_knowledge_detail_endpoint(client: AsyncClient):
     data = resp.json()
     assert data["atom"]["id"] == atom_id
     assert "links" in data
-    assert "history" in data
 
 
-async def test_knowledge_history_endpoint(client: AsyncClient):
-    """GET /knowledge/{id}/history returns version history."""
+async def test_knowledge_relevant_search(client: AsyncClient):
+    """GET /knowledge/relevant returns search results."""
     resp = await client.post(
         "/knowledge",
         json={
-            "context": "History test from transformer experiments",
-            "claim": "Version history endpoint works for tracking knowledge atom evolution",
+            "context": "Relevance search test for knowledge atoms",
+            "claim": "Search endpoint works correctly for finding relevant atoms",
         },
     )
-    atom_id = resp.json()["atom_id"]
+    assert resp.status_code == 201
 
-    resp = await client.get(f"/knowledge/{atom_id}/history")
+    resp = await client.get("/knowledge/relevant", params={"query": "search"})
     assert resp.status_code == 200
     assert isinstance(resp.json(), list)
-    assert len(resp.json()) >= 1

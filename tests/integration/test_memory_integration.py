@@ -22,7 +22,7 @@ async def _run_stub(lab, prompt: str) -> None:
     """Helper: run the stub backend through the orchestrator pipeline."""
     backend = StubAgentBackend()
     orchestrator = AgentOrchestrator(lab, backend)
-    run = await orchestrator.start(prompt)
+    run = await orchestrator.start(prompt, domain_id="test-domain")
     await orchestrator.execute(run)
 
 

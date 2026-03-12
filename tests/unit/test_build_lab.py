@@ -4,7 +4,7 @@ import pytest
 
 from agentml.api.deps import build_lab
 from agentml.config.settings import MemorySettings, Settings, StorageSettings, TrackingSettings
-from agentml.storage.local_memory import LocalMemoryStore
+from agentml.storage.local import LocalMemoryStore
 from agentml.tracking.file_tracker import FileTracker
 from agentml.tracking.noop_tracker import NoopTracker
 

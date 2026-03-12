@@ -1,7 +1,7 @@
 """AI-assisted tool generation for research domains.
 
 Uses a structured prompt to generate DomainTool definitions
-(name, description, type, code, parameters) from a domain description.
+(name, description, type, example_usage, parameters) from a domain description.
 """
 
 from __future__ import annotations
@@ -43,20 +43,17 @@ def build_tool_generation_prompt(domain: Domain, hint: str = "") -> str:
 {existing_tools}
 
 ## Task
-Generate Python tool definitions for this domain. Each tool should be a
-self-contained Python function that can be executed in a subprocess.
+Generate semantic tool descriptors for this domain. Each tool describes a
+capability the agent should have — the agent writes its own code to use them.
 {f"User hint: {hint}" if hint else ""}
 
 ## Output Format
 Return a JSON array of tool objects. Each tool must have:
-- "name": snake_case function name (e.g. "load_dataset", "evaluate_model")
+- "name": snake_case name (e.g. "load_dataset", "evaluate_model")
 - "description": What the tool does (1-2 sentences)
 - "type": One of {sorted(_VALID_TYPES)}
 - "parameters": JSON object describing input parameters (JSON Schema style)
-- "code": Python code as a string. Must define a `main(args)` function that:
-  - Receives a dict of arguments
-  - Returns a result (printed as JSON to stdout)
-  - Uses only standard library + common ML packages (numpy, pandas, sklearn, etc.)
+- "example_usage": A short Python snippet showing how the agent might use this tool
 
 ## Example
 ```json
@@ -68,7 +65,7 @@ Return a JSON array of tool objects. Each tool must have:
     "parameters": {{
       "file_path": {{"type": "string", "description": "Path to CSV file"}}
     }},
-    "code": "import pandas as pd\\nimport json\\nimport sys\\n\\ndef main(args):\\n    df = pd.read_csv(args['file_path'])\\n    result = {{'rows': len(df), 'columns': list(df.columns)}}\\n    print(json.dumps(result))"
+    "example_usage": "import pandas as pd\\ndf = pd.read_csv('data.csv')\\nprint(df.describe())"
   }}
 ]
 ```
@@ -138,9 +135,9 @@ def _validate_tool_dict(tool: dict[str, Any], *, index: int = 0) -> dict[str, An
     if tool_type not in _VALID_TYPES:
         tool_type = "custom"
 
-    code = tool.get("code", "")
-    if not isinstance(code, str):
-        raise ValueError(f"Tool {index}: 'code' must be a string")
+    example_usage = tool.get("example_usage", "")
+    if not isinstance(example_usage, str):
+        raise ValueError(f"Tool {index}: 'example_usage' must be a string")
 
     parameters = tool.get("parameters", {})
     if not isinstance(parameters, dict):
@@ -150,7 +147,7 @@ def _validate_tool_dict(tool: dict[str, Any], *, index: int = 0) -> dict[str, An
         "name": name,
         "description": str(description),
         "type": tool_type,
-        "code": code,
+        "example_usage": example_usage,
         "parameters": parameters,
     }
 
@@ -166,7 +163,7 @@ def dicts_to_domain_tools(
             name=d["name"],
             description=d["description"],
             type=ToolType(d["type"]),
-            code=d["code"],
+            example_usage=d["example_usage"],
             parameters=d["parameters"],
             created_by=created_by,
         )
