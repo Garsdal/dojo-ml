@@ -2,9 +2,10 @@
 
 # ── Development ───────────────────────────────────────────────────────────────
 
-# Install all deps (incl. dev + optional extras)
+# Install all deps (incl. dev + optional extras) and frontend
 dev:
     uv sync --all-extras
+    cd frontend && npm install
 
 # Run all tests
 test:

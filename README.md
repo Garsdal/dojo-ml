@@ -1,10 +1,9 @@
+# 🥋 Dojo — An AI-powered autonomous ML research platform.
+
 <div align="center">
-  <img src="dojo-logo-no-bg.png" alt="Dojo.ml logo" width="200" />
+  <img src="assets/dojo-logo-no-bg.png" alt="Dojo.ml logo" width="200" />
 
-  <h1>Dojo</h1>
-
-  <p><strong>An AI-powered autonomous ML research platform.</strong><br>
-  Define a research domain. Agents run thousands of experiments, build a compressed knowledge base, and surface what actually works.</p>
+  <p><strong>Define a research domain. Agents run many experiments, build a compressed knowledge base, and surface what actually works.</strong></p>
 </div>
 
 ---
@@ -15,11 +14,27 @@ You define the **domain** — a research area with goals, data, and tools. AI ag
 
 ```
 Domain (you define)
-  └── Experiments (agent creates — thousands per domain)
+  └── Experiments (agent creates — many per domain)
         └── Knowledge Atoms (produced, linked, versioned, compressed)
 ```
 
 Every insight is linked back to the experiments that produced it. Knowledge compounds over time instead of getting lost in logs.
+
+---
+
+## Current Status
+
+> **⚠️ Proof of Concept** — Dojo is under active development. The following constraints apply:
+
+**Now**
+- **Agent**: Claude Code only (via `claude` CLI subprocess)
+- **Compute**: Local only (in-process / subprocess)
+- **Storage**: Local only (JSON files on disk)
+
+**Future**
+- **Agents**: Multiple SDK backends — Claude, GitHub Copilot, ChatGPT
+- **Compute**: Sandboxed cloud execution via [Modal](https://modal.com)
+- **Storage**: Persistent cloud storage via [Supabase](https://supabase.com)
 
 ---
 

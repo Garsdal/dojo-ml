@@ -1,7 +1,6 @@
 import { Badge } from "@/components/ui/badge";
 import { useHealth } from "@/hooks/use-health";
 import { cn } from "@/lib/utils";
-import { FlaskConical } from "lucide-react";
 
 export function Header() {
   const { data, error } = useHealth();
@@ -10,11 +9,15 @@ export function Header() {
   return (
     <header className="flex items-center justify-between h-14 px-6 border-b border-soft-fawn/20 bg-surface">
       <div className="flex items-center gap-2.5">
-        <FlaskConical className="h-5 w-5 text-muted-teal" />
+        <img
+          src="/assets/dojo-logo-no-bg.png"
+          alt="Dojo.ml"
+          className="h-8 w-auto"
+        />
         <span className="font-heading font-extrabold text-blackberry text-xl tracking-tight">
-          Dojo.ml
+          Dojo
         </span>
-        <Badge className="bg-wheat/30 text-blackberry border-0 text-xs">
+        <Badge className="bg-wheat/30 text-blackberry border-0 text-[10px] px-1.5 py-0">
           v0.1.0
         </Badge>
       </div>
