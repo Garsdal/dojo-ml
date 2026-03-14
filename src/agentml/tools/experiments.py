@@ -1,8 +1,11 @@
 """AgentML experiment management tools."""
 
+import json
+from datetime import UTC, datetime
 from typing import Any
 
-from agentml.core.experiment import Experiment, ExperimentResult, Hypothesis
+from agentml.core.experiment import CodeRun, Experiment, ExperimentResult, Hypothesis
+from agentml.core.state_machine import ExperimentState
 from agentml.runtime.experiment_service import ExperimentService
 from agentml.runtime.lab import LabEnvironment
 from agentml.tools.base import ToolDef, ToolResult
@@ -29,10 +32,9 @@ def create_experiment_tools(lab: LabEnvironment) -> list[ToolDef]:
         exp = await service.get(args["experiment_id"])
         if exp is None:
             return ToolResult(error=f"Experiment {args['experiment_id']} not found")
-        exp.result = ExperimentResult(
-            metrics=args.get("metrics", {}),
-            logs=args.get("logs", []),
-        )
+        exp.result = exp.result or ExperimentResult()
+        exp.result.metrics = args.get("metrics", {})
+        exp.result.logs = args.get("logs", [])
         await service.complete(exp)
         return ToolResult(
             data={
@@ -96,6 +98,86 @@ def create_experiment_tools(lab: LabEnvironment) -> list[ToolDef]:
                     }
                 )
         return ToolResult(data={"comparison": rows, "count": len(rows)})
+
+    async def run_experiment_code(args: dict[str, Any]) -> ToolResult:
+        """Execute Python code for an experiment, storing it as a traceable artifact."""
+        experiment_id = args["experiment_id"]
+        code = args["code"]
+        description = args.get("description", "")
+
+        exp = await service.get(experiment_id)
+        if exp is None:
+            return ToolResult(error=f"Experiment {experiment_id} not found")
+        if exp.state != ExperimentState.RUNNING:
+            return ToolResult(
+                error=f"Experiment {experiment_id} is not in RUNNING state (state={exp.state.value})"
+            )
+
+        # Determine run number
+        current_runs = exp.result.code_runs if exp.result else []
+        run_number = len(current_runs) + 1
+
+        # Store code as artifact before execution
+        code_path = f"experiments/{experiment_id}/run_{run_number}.py"
+        await lab.artifact_store.save(code_path, code.encode())
+
+        # Get workspace config from domain
+        cwd: str | None = None
+        python_path: str | None = None
+        env_vars: dict[str, str] | None = None
+
+        if exp.domain_id:
+            domain = await lab.domain_store.load(exp.domain_id)
+            if domain and domain.workspace and domain.workspace.ready:
+                ws = domain.workspace
+                cwd = ws.path or None
+                python_path = ws.python_path
+                env_vars = ws.env_vars or None
+
+        # Execute the code
+        exec_result = await lab.sandbox.execute(
+            code,
+            cwd=cwd,
+            python_path=python_path,
+            env_vars=env_vars,
+        )
+
+        # Store execution metadata
+        meta = {
+            "run_number": run_number,
+            "code_path": code_path,
+            "description": description,
+            "exit_code": exec_result.exit_code,
+            "duration_ms": exec_result.duration_ms,
+            "timestamp": datetime.now(UTC).isoformat(),
+        }
+        meta_path = f"experiments/{experiment_id}/run_{run_number}_meta.json"
+        await lab.artifact_store.save(meta_path, json.dumps(meta).encode())
+
+        # Record the code run on the experiment
+        code_run = CodeRun(
+            run_number=run_number,
+            code_path=code_path,
+            description=description,
+            exit_code=exec_result.exit_code,
+            duration_ms=exec_result.duration_ms,
+            timestamp=datetime.now(UTC),
+        )
+        if exp.result is None:
+            exp.result = ExperimentResult()
+        exp.result.code_runs.append(code_run)
+        await lab.experiment_store.save(exp)
+
+        return ToolResult(
+            data={
+                "exit_code": exec_result.exit_code,
+                "stdout": exec_result.stdout,
+                "stderr": exec_result.stderr,
+                "duration_ms": exec_result.duration_ms,
+                "code_path": code_path,
+                "run_number": run_number,
+            }
+        )
 
     return [
         ToolDef(
@@ -222,5 +304,33 @@ def create_experiment_tools(lab: LabEnvironment) -> list[ToolDef]:
                 "required": ["experiment_ids"],
             },
             handler=compare_experiments,
+        ),
+        ToolDef(
+            name="run_experiment_code",
+            description=(
+                "Execute Python code for an experiment in the workspace environment. "
+                "The code is automatically saved as a traceable artifact linked to the experiment. "
+                "Use this instead of Bash for all experiment code — it runs with the correct "
+                "workspace dependencies (no setup needed) and gives you full code traceability."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "experiment_id": {
+                        "type": "string",
+                        "description": "The experiment ID this code belongs to",
+                    },
+                    "code": {
+                        "type": "string",
+                        "description": "Python code to execute",
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "Brief description of what this code does",
+                    },
+                },
+                "required": ["experiment_id", "code"],
+            },
+            handler=run_experiment_code,
         ),
     ]

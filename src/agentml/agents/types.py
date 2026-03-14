@@ -44,6 +44,7 @@ class AgentRunConfig:
     max_budget_usd: float | None = None
     permission_mode: str = "acceptEdits"
     cwd: str | None = None
+    python_path: str | None = None  # Path to Python executable for code execution
     domain_id: str = ""  # The domain ID for the current run
 
 

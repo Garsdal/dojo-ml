@@ -1,9 +1,10 @@
 """Local experiment store — JSON file per experiment."""
 
 import json
+from datetime import datetime
 from pathlib import Path
 
-from agentml.core.experiment import Experiment, ExperimentResult, Hypothesis
+from agentml.core.experiment import CodeRun, Experiment, ExperimentResult, Hypothesis
 from agentml.core.state_machine import ExperimentState
 from agentml.interfaces.experiment_store import ExperimentStore
 from agentml.utils.serialization import to_json
@@ -54,15 +55,28 @@ class LocalExperimentStore(ExperimentStore):
     @staticmethod
     def _from_dict(data: dict) -> Experiment:
         """Reconstruct an Experiment from a dictionary."""
-        from datetime import datetime
-
         hypothesis = None
         if data.get("hypothesis"):
             hypothesis = Hypothesis(**data["hypothesis"])
 
         result = None
         if data.get("result"):
-            result = ExperimentResult(**data["result"])
+            result_data = dict(data["result"])
+            code_runs_data = result_data.pop("code_runs", [])
+            code_runs = [
+                CodeRun(
+                    run_number=cr.get("run_number", 0),
+                    code_path=cr.get("code_path", ""),
+                    description=cr.get("description", ""),
+                    exit_code=cr.get("exit_code", 0),
+                    duration_ms=cr.get("duration_ms", 0.0),
+                    timestamp=datetime.fromisoformat(cr["timestamp"])
+                    if "timestamp" in cr
+                    else datetime.now(),
+                )
+                for cr in code_runs_data
+            ]
+            result = ExperimentResult(**result_data, code_runs=code_runs)
 
         return Experiment(
             id=data["id"],

@@ -100,10 +100,16 @@ class AgentOrchestrator:
             cwd=self.cwd,
             domain_id=run.domain_id,
         )
+        if domain is not None and domain.workspace is not None and domain.workspace.ready:
+            ws = domain.workspace
+            if ws.path:
+                config.cwd = ws.path
+            if ws.python_path:
+                config.python_path = ws.python_path
         run.config = config
 
         # Collect tool definitions (framework-agnostic)
-        tool_defs = collect_all_tools(self.lab)
+        tool_defs = collect_all_tools(self.lab, domain=domain)
 
         # Configure the backend with tools and config
         await self.backend.configure(tool_defs, config)

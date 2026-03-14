@@ -220,7 +220,7 @@ async def test_compare_experiments(lab):
 
 async def test_tool_definitions_count(lab):
     tools = create_experiment_tools(lab)
-    assert len(tools) == 6
+    assert len(tools) == 7
     names = {t.name for t in tools}
     assert names == {
         "create_experiment",
@@ -229,4 +229,5 @@ async def test_tool_definitions_count(lab):
         "get_experiment",
         "list_experiments",
         "compare_experiments",
+        "run_experiment_code",
     }

@@ -93,4 +93,5 @@ def build_lab(settings: Settings) -> LabEnvironment:
         domain_store=LocalDomainStore(base_dir=base / "domains"),
         knowledge_link_store=knowledge_link_store,
         knowledge_linker=KeywordKnowledgeLinker(memory_store, knowledge_link_store),
+        settings=settings,
     )

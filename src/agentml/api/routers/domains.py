@@ -43,6 +43,23 @@ class DomainToolResponse(BaseModel):
     created_at: str
 
 
+class WorkspaceRequest(BaseModel):
+    source: str = "local"
+    path: str = ""
+    git_url: str | None = None
+    git_ref: str | None = None
+    setup_script: str | None = None
+    env_vars: dict[str, str] = {}
+
+
+class WorkspaceResponse(BaseModel):
+    path: str
+    source: str
+    ready: bool
+    python_path: str | None
+    git_url: str | None = None
+
+
 class CreateDomainRequest(BaseModel):
     name: str
     description: str = ""
@@ -50,6 +67,7 @@ class CreateDomainRequest(BaseModel):
     config: dict[str, Any] = {}
     metadata: dict[str, Any] = {}
     tools: list[DomainToolRequest] = []
+    workspace: WorkspaceRequest | None = None
 
 
 class UpdateDomainRequest(BaseModel):
@@ -71,6 +89,7 @@ class DomainResponse(BaseModel):
     metadata: dict[str, Any]
     experiment_ids: list[str]
     tools: list[DomainToolResponse]
+    workspace: WorkspaceResponse | None = None
     created_at: str
     updated_at: str
 
@@ -89,6 +108,15 @@ def _tool_response(tool: DomainTool) -> DomainToolResponse:
 
 
 def _domain_response(domain: Domain) -> DomainResponse:
+    workspace = None
+    if domain.workspace is not None:
+        workspace = WorkspaceResponse(
+            path=domain.workspace.path,
+            source=domain.workspace.source.value,
+            ready=domain.workspace.ready,
+            python_path=domain.workspace.python_path,
+            git_url=domain.workspace.git_url,
+        )
     return DomainResponse(
         id=domain.id,
         name=domain.name,
@@ -99,6 +127,7 @@ def _domain_response(domain: Domain) -> DomainResponse:
         metadata=domain.metadata,
         experiment_ids=domain.experiment_ids,
         tools=[_tool_response(t) for t in domain.tools],
+        workspace=workspace,
         created_at=domain.created_at.isoformat(),
         updated_at=domain.updated_at.isoformat(),
     )
@@ -109,6 +138,8 @@ def _domain_response(domain: Domain) -> DomainResponse:
 
 @router.post("", response_model=DomainResponse, status_code=201)
 async def create_domain(body: CreateDomainRequest, request: Request) -> DomainResponse:
+    from agentml.core.domain import Workspace, WorkspaceSource
+
     lab = _get_lab(request)
     service = DomainService(lab)
 
@@ -124,6 +155,17 @@ async def create_domain(body: CreateDomainRequest, request: Request) -> DomainRe
         for t in body.tools
     ]
 
+    workspace = None
+    if body.workspace is not None:
+        workspace = Workspace(
+            source=WorkspaceSource(body.workspace.source),
+            path=body.workspace.path,
+            git_url=body.workspace.git_url,
+            git_ref=body.workspace.git_ref,
+            setup_script=body.workspace.setup_script,
+            env_vars=body.workspace.env_vars,
+        )
+
     domain = Domain(
         name=body.name,
         description=body.description,
@@ -132,6 +174,7 @@ async def create_domain(body: CreateDomainRequest, request: Request) -> DomainRe
         config=body.config,
         metadata=body.metadata,
         tools=tools,
+        workspace=workspace,
     )
     await service.create(domain)
     return _domain_response(domain)
@@ -299,6 +342,110 @@ async def list_domain_knowledge(domain_id: str, request: Request) -> list[dict]:
         }
         for a in atoms
     ]
+
+
+# --- Workspace Management ---
+
+
+@router.post("/{domain_id}/workspace/setup", status_code=202)
+async def setup_workspace(domain_id: str, request: Request) -> dict:
+    """Trigger workspace setup for a domain (one-time operation).
+
+    Resolves the workspace path, creates a virtual environment,
+    and installs dependencies. Returns 202 and runs setup synchronously.
+    """
+    from agentml.runtime.workspace_service import WorkspaceService
+    from agentml.config.settings import Settings
+
+    lab = _get_lab(request)
+    service = DomainService(lab)
+    domain = await service.get(domain_id)
+    if domain is None:
+        raise HTTPException(status_code=404, detail="Domain not found")
+    if domain.workspace is None:
+        raise HTTPException(status_code=400, detail="Domain has no workspace configured")
+
+    settings: Settings = request.app.state.settings
+    ws_service = WorkspaceService(settings.storage.base_dir)
+    try:
+        workspace = await ws_service.setup(domain)
+        domain.workspace = workspace
+        await service.update(domain)
+        return {"status": "ready", "path": workspace.path, "python_path": workspace.python_path}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Workspace setup failed: {e}") from e
+
+
+@router.get("/{domain_id}/workspace/status")
+async def workspace_status(domain_id: str, request: Request) -> dict:
+    """Get workspace setup status for a domain."""
+    from agentml.runtime.workspace_service import WorkspaceService
+    from agentml.config.settings import Settings
+
+    lab = _get_lab(request)
+    service = DomainService(lab)
+    domain = await service.get(domain_id)
+    if domain is None:
+        raise HTTPException(status_code=404, detail="Domain not found")
+
+    if domain.workspace is None:
+        return {"configured": False}
+
+    settings: Settings = request.app.state.settings
+    ws_service = WorkspaceService(settings.storage.base_dir)
+    return ws_service.get_status(domain.workspace)
+
+
+@router.post("/{domain_id}/workspace/validate")
+async def validate_workspace(domain_id: str, request: Request) -> dict:
+    """Validate that the workspace is functional."""
+    from agentml.runtime.workspace_service import WorkspaceService
+    from agentml.config.settings import Settings
+
+    lab = _get_lab(request)
+    service = DomainService(lab)
+    domain = await service.get(domain_id)
+    if domain is None:
+        raise HTTPException(status_code=404, detail="Domain not found")
+    if domain.workspace is None:
+        raise HTTPException(status_code=400, detail="Domain has no workspace configured")
+
+    settings: Settings = request.app.state.settings
+    ws_service = WorkspaceService(settings.storage.base_dir)
+    return await ws_service.validate(domain)
+
+
+@router.post("/{domain_id}/workspace/scan")
+async def scan_workspace(domain_id: str, request: Request) -> dict:
+    """Scan the workspace and return tool suggestions."""
+    from agentml.runtime.workspace_scanner import WorkspaceScanner
+
+    lab = _get_lab(request)
+    service = DomainService(lab)
+    domain = await service.get(domain_id)
+    if domain is None:
+        raise HTTPException(status_code=404, detail="Domain not found")
+    if domain.workspace is None or not domain.workspace.path:
+        raise HTTPException(status_code=400, detail="Domain has no workspace configured")
+
+    scanner = WorkspaceScanner()
+    summary = scanner.get_summary(domain.workspace.path)
+    suggestions = scanner.scan(domain.workspace.path)
+
+    return {
+        "summary": summary,
+        "suggestions": [
+            {
+                "name": s.name,
+                "description": s.description,
+                "type": s.tool_type,
+                "code": s.code,
+                "example_usage": s.example_usage,
+                "parameters": s.parameters,
+            }
+            for s in suggestions
+        ],
+    }
 
 
 # --- AI Tool Generation ---

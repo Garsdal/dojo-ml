@@ -27,12 +27,45 @@ class ToolType(StrEnum):
     CUSTOM = "custom"
 
 
+class WorkspaceSource(StrEnum):
+    """How a workspace was created."""
+
+    LOCAL = "local"
+    GIT = "git"
+    EMPTY = "empty"
+
+
+@dataclass
+class Workspace:
+    """Execution environment for a domain's agent runs.
+
+    A workspace is a persistent, pre-configured directory with
+    dependencies installed. The agent runs all code here instead
+    of spending API calls on environment setup.
+    """
+
+    path: str = ""
+    source: WorkspaceSource = WorkspaceSource.LOCAL
+    python_path: str | None = None
+    env_vars: dict[str, str] = field(default_factory=dict)
+    dependencies_file: str | None = None
+    setup_script: str | None = None
+    ready: bool = False
+    git_url: str | None = None
+    git_ref: str | None = None
+
+
 @dataclass
 class DomainTool:
     """A domain-specific tool descriptor.
 
-    Purely semantic — tells the agent what operations are available.
-    The agent decides how to use them via its own code generation.
+    Tier 1 (executable=False): Semantic hint in the system prompt.
+    The agent reads the description and example_usage and writes
+    its own code.
+
+    Tier 2 (executable=True): Actual callable MCP tool. The agent
+    calls it directly and gets a structured result. The tool code
+    runs in the workspace Python environment.
     """
 
     id: str = field(default_factory=generate_id)
@@ -43,6 +76,9 @@ class DomainTool:
     example_usage: str = ""
     created_by: str = "human"
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    executable: bool = False
+    code: str = ""
+    return_description: str = ""
 
 
 @dataclass
@@ -60,3 +96,4 @@ class Domain:
     experiment_ids: list[str] = field(default_factory=list)
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    workspace: Workspace | None = None

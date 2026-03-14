@@ -1,6 +1,9 @@
 """Lab environment — dependency injection container for all backends."""
 
-from dataclasses import dataclass
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any
 
 from agentml.interfaces.artifact_store import ArtifactStore
 from agentml.interfaces.compute import ComputeBackend
@@ -26,3 +29,4 @@ class LabEnvironment:
     domain_store: DomainStore
     knowledge_link_store: KnowledgeLinkStore
     knowledge_linker: KnowledgeLinker
+    settings: Any | None = field(default=None)

@@ -19,12 +19,25 @@ class Sandbox(ABC):
     """Abstract base class for sandboxed code execution."""
 
     @abstractmethod
-    async def execute(self, code: str, *, language: str = "python") -> ExecutionResult:
+    async def execute(
+        self,
+        code: str,
+        *,
+        language: str = "python",
+        cwd: str | None = None,
+        python_path: str | None = None,
+        env_vars: dict[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> ExecutionResult:
         """Execute code in the sandbox.
 
         Args:
             code: The source code to execute.
             language: The programming language (default: python).
+            cwd: Working directory for execution.
+            python_path: Path to Python executable (uses system default if None).
+            env_vars: Additional environment variables.
+            timeout: Override sandbox default timeout.
 
         Returns:
             The execution result.
@@ -33,14 +46,7 @@ class Sandbox(ABC):
 
     @abstractmethod
     async def install_packages(self, packages: list[str]) -> ExecutionResult:
-        """Install packages in the sandbox environment.
-
-        Args:
-            packages: List of package names to install.
-
-        Returns:
-            The execution result.
-        """
+        """Install packages in the sandbox environment."""
         ...
 
     @abstractmethod

@@ -61,3 +61,8 @@ def run(
 from agentml.cli.config import config_app  # noqa: E402
 
 app.add_typer(config_app, name="config")
+
+# Register domain subcommand group
+from agentml.cli.domain import app as domain_app  # noqa: E402
+
+app.add_typer(domain_app, name="domain")

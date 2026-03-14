@@ -17,6 +17,18 @@ class Hypothesis:
 
 
 @dataclass
+class CodeRun:
+    """Record of a single code execution within an experiment."""
+
+    run_number: int = 0
+    code_path: str = ""
+    description: str = ""
+    exit_code: int = 0
+    duration_ms: float = 0.0
+    timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
+
+
+@dataclass
 class ExperimentResult:
     """Result of an experiment run."""
 
@@ -24,6 +36,7 @@ class ExperimentResult:
     artifacts: list[str] = field(default_factory=list)
     logs: list[str] = field(default_factory=list)
     error: str | None = None
+    code_runs: list[CodeRun] = field(default_factory=list)
 
 
 @dataclass
