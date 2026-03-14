@@ -26,7 +26,7 @@ format:
 run-stub *ARGS:
     AGENTML_AGENT__BACKEND=stub uv run agentml start {{ARGS}}
 
-# Start with Claude agent (requires ANTHROPIC_API_KEY)
+# Start with Claude agent (uses claude CLI subscription; ANTHROPIC_API_KEY only needed for domain tool generation)
 run-claude *ARGS:
     AGENTML_AGENT__BACKEND=claude uv run agentml start {{ARGS}}
 

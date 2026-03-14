@@ -18,11 +18,17 @@ just dev
 # Start with the stub agent (no API key needed)
 just run-stub
 
-# Or set the backend via config
-just run   # uses .agentml/config.yaml or defaults
+# Start with the Claude agent (uses your Claude Code CLI subscription)
+just run-claude
 ```
 
 Backend runs at `http://localhost:8000`, frontend at `http://localhost:5173`.
+
+## Claude Authentication
+
+The Claude agent backend works via the `claude` CLI — it spawns the binary as a subprocess and inherits whatever account it's logged into. If you're already logged in to Claude Code (`claude` works in your terminal), **no API key is needed** for normal task execution.
+
+`ANTHROPIC_API_KEY` is only required for the domain tool-generation feature (`POST /domains/{id}/generate-tools`), which uses the Anthropic API directly for a one-shot completion. Regular agent task runs do not use it.
 
 ## Config
 
