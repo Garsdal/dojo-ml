@@ -7,6 +7,16 @@ export type DomainStatus =
   | "completed"
   | "archived";
 
+export type WorkspaceSource = "local" | "git" | "empty";
+
+export interface Workspace {
+  path: string;
+  source: WorkspaceSource;
+  ready: boolean;
+  python_path: string | null;
+  git_url: string | null;
+}
+
 export interface DomainTool {
   id: string;
   name: string;
@@ -16,6 +26,9 @@ export interface DomainTool {
   parameters: Record<string, unknown>;
   created_by: string;
   created_at: string;
+  executable: boolean;
+  code: string;
+  return_description: string;
 }
 
 export interface Domain {
@@ -28,6 +41,7 @@ export interface Domain {
   metadata: Record<string, unknown>;
   experiment_ids: string[];
   tools: DomainTool[];
+  workspace: Workspace | null;
   created_at: string;
   updated_at: string;
 }
@@ -37,10 +51,24 @@ export interface Domain {
 export interface Experiment {
   id: string;
   domain_id: string;
+  hypothesis: string | null;
   state: "pending" | "running" | "completed" | "failed" | "archived";
   config: Record<string, unknown>;
   metrics: Record<string, number> | null;
   error: string | null;
+}
+
+export interface CodeRun {
+  run_number: number;
+  code_path: string;
+  description: string;
+  exit_code: number;
+  duration_ms: number;
+  timestamp: string;
+}
+
+export interface CodeRunDetail extends CodeRun {
+  code: string;
 }
 
 // --- Knowledge ---
