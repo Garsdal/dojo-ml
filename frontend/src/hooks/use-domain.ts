@@ -33,6 +33,9 @@ export async function addDomainTool(
     example_usage?: string;
     parameters?: Record<string, unknown>;
     created_by?: string;
+    executable?: boolean;
+    code?: string;
+    return_description?: string;
   },
 ): Promise<DomainTool> {
   return apiFetch<DomainTool>(`/domains/${domainId}/tools`, {
