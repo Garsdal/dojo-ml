@@ -1,82 +1,115 @@
-# Dojo.ml
+<div align="center">
+  <img src="dojo-logo-no-bg.png" alt="Dojo.ml logo" width="200" />
 
-<img src="dojo-logo-no-bg.png" alt="Dojo.ml logo" width="180" />
+  <h1>Dojo</h1>
 
-AI-powered ML experiment orchestration. Hexagonal architecture, config-driven backend selection, React dashboard.
+  <p><strong>An AI-powered autonomous ML research platform.</strong><br>
+  Define a research domain. Agents run thousands of experiments, build a compressed knowledge base, and surface what actually works.</p>
+</div>
+
+---
+
+## What is Dojo?
+
+You define the **domain** — a research area with goals, data, and tools. AI agents handle the rest: planning hypotheses, writing and executing experiment code, logging metrics, and continuously distilling findings into a growing knowledge base.
+
+```
+Domain (you define)
+  └── Experiments (agent creates — thousands per domain)
+        └── Knowledge Atoms (produced, linked, versioned, compressed)
+```
+
+Every insight is linked back to the experiments that produced it. Knowledge compounds over time instead of getting lost in logs.
+
+---
 
 ## Prerequisites
 
 - Python 3.13+
 - [uv](https://docs.astral.sh/uv/)
-- [just](https://github.com/casey/just) (task runner)
-- Node.js 18+ (for frontend)
+- [just](https://github.com/casey/just)
+- Node.js 18+ (frontend)
 
 ## Quick Start
 
 ```bash
-# Install dependencies
+# 1. Install all dependencies
 just dev
 
-# Start with the stub agent (no API key needed)
+# 2. Run with stub agent (no API key needed — great for exploring)
 just run-stub
 
-# Start with the Claude agent (uses your Claude Code CLI subscription)
+# 3. Run with Claude agent (uses your Claude Code CLI subscription)
 just run-claude
 ```
 
-Backend runs at `http://localhost:8000`, frontend at `http://localhost:5173`.
+Backend → `http://localhost:8000` · Frontend → `http://localhost:5173`
 
 ## Claude Authentication
 
-The Claude agent backend works via the `claude` CLI — it spawns the binary as a subprocess and inherits whatever account it's logged into. If you're already logged in to Claude Code (`claude` works in your terminal), **no API key is needed** for normal task execution.
+Dojo uses the `claude` CLI as a subprocess — it inherits whatever account you're already logged into. **No API key needed** for regular agent runs if you have Claude Code installed.
 
-`ANTHROPIC_API_KEY` is only required for the domain tool-generation feature (`POST /domains/{id}/generate-tools`), which uses the Anthropic API directly for a one-shot completion. Regular agent task runs do not use it.
+`ANTHROPIC_API_KEY` is only required for AI-assisted domain tool generation (`POST /domains/{id}/generate-tools`).
+
+---
 
 ## Config
 
-Create `.dojo/config.yaml` or use env vars:
+Create `.dojo/config.yaml` in your project root:
 
 ```yaml
 agent:
-  backend: stub        # "stub" or "claude"
+  backend: stub        # "stub" (no LLM) or "claude"
 tracking:
   backend: file        # "file" or "mlflow"
 ```
 
-Env var override: `DOJO_AGENT__BACKEND=stub`
+Or use environment variables:
+
+```bash
+DOJO_AGENT__BACKEND=claude
+DOJO_TRACKING__BACKEND=mlflow
+```
+
+---
 
 ## Tests
 
 ```bash
-just test       # run all tests
-just lint       # check linting
+just test       # all tests
+just lint       # ruff check
 just format     # auto-fix lint + format
 ```
+
+---
 
 ## Project Structure
 
 ```
 src/dojo/
-  agents/       # AgentBackend ABC + backends (claude, stub)
-  api/          # FastAPI app + routers
-  tools/        # MCP tool definitions (experiments, knowledge, tracking)
-  runtime/      # LabEnvironment (DI), ExperimentService
-  core/         # Domain models, state machine
-  config/       # Settings (pydantic-settings + YAML)
-  storage/      # Persistence adapters
+  core/         # Domain models, Experiment, KnowledgeAtom, state machine
+  agents/       # AgentBackend ABC + Claude / Stub backends
+  api/          # FastAPI app + routers (/domains, /experiments, /knowledge, /agent)
+  tools/        # Agent tools (experiments, knowledge, tracking)
+  runtime/      # LabEnvironment (DI container), ExperimentService, KnowledgeLinker
+  storage/      # Local JSON adapters (domain, experiment, knowledge)
   tracking/     # FileTracker, MlflowTracker
-frontend/       # React 19 + Vite + shadcn/ui
+  config/       # pydantic-settings + YAML config
+frontend/       # React 19 + Vite 7 + shadcn/ui dark theme
 tests/          # unit, integration, e2e
 ```
 
-## API
+---
+
+## Key API Endpoints
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/tasks` | Create + run task (sync) |
-| POST | `/agent/run` | Start agent session (async + SSE) |
-| GET | `/experiments` | List experiments |
-| GET | `/knowledge` | List knowledge atoms |
-| GET | `/health` | Health check |
+| `POST` | `/domains` | Create a research domain |
+| `POST` | `/agent/run` | Start an agent run on a domain |
+| `GET` | `/agent/runs/{id}/events` | Live SSE event stream |
+| `GET` | `/experiments?domain_id=` | List experiments |
+| `GET` | `/knowledge?domain_id=` | List knowledge atoms |
+| `GET` | `/health` | Health check |
 
-See [AGENTS.md](AGENTS.md) for the full reference.
+See [AGENTS.md](AGENTS.md) for the full API reference and architecture details.

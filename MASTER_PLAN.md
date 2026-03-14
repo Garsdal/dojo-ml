@@ -1,12 +1,12 @@
-# MASTER_PLAN.md — Dojo.ml Vision & Architecture
+# MASTER_PLAN.md — Dojo Vision & Architecture
 
-> **Dojo.ml** — An AI-powered autonomous ML research platform where agents recursively explore domains, run experiments, and build a compressed, evolving knowledge base.
+> **Dojo** — An AI-powered autonomous ML research platform where agents recursively explore domains, run experiments, and build a compressed, evolving knowledge base.
 
 ---
 
 ## 1. Vision
 
-Dojo.ml is a **prompt-to-results ML research engine**. A human defines a research *domain* — a broad area of inquiry with goals, data, and tools — and AI agents autonomously plan, execute, and learn from thousands of experiments within that domain.
+Dojo is a **prompt-to-results ML research engine**. A human defines a research *domain* — a broad area of inquiry with goals, data, and tools — and AI agents autonomously plan, execute, and learn from thousands of experiments within that domain.
 
 The system operates on three levels of hierarchy:
 
@@ -661,7 +661,7 @@ frontend/src/
 
 ## 13. Summary
 
-Dojo.ml evolves from a task-based experiment runner into a **domain-driven research platform** where:
+Dojo evolves from a task-based experiment runner into a **domain-driven research platform** where:
 
 - **Humans define the "what"** — research domains with goals, data, and tools
 - **Agents handle the "how"** — recursively planning, executing, and learning from experiments
