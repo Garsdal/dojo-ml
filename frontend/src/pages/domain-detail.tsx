@@ -1,6 +1,5 @@
 import { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { useSWRConfig } from "swr";
 import { useDomain, updateDomain } from "@/hooks/use-domain";
 import { useDomainExperiments } from "@/hooks/use-domain-experiments";
 import { useDomainKnowledge } from "@/hooks/use-domain-knowledge";
@@ -38,8 +37,16 @@ export default function DomainDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { data: domain, isLoading, mutate } = useDomain(id);
-  const { data: experiments, isLoading: expLoading } = useDomainExperiments(id);
-  const { data: knowledge, isLoading: knLoading } = useDomainKnowledge(id);
+  const {
+    data: experiments,
+    isLoading: expLoading,
+    mutate: mutateExperiments,
+  } = useDomainExperiments(id);
+  const {
+    data: knowledge,
+    isLoading: knLoading,
+    mutate: mutateKnowledge,
+  } = useDomainKnowledge(id);
   const { data: metrics, isLoading: metLoading } = useDomainMetrics(id);
   const [activeTab, setActiveTab] = useState("dashboard");
   const [highlightExpId, setHighlightExpId] = useState<string | undefined>(
@@ -50,21 +57,17 @@ export default function DomainDetailPage() {
   const hasActiveRun =
     agentRuns?.some((r) => r.domain_id === id && r.status === "running") ??
     false;
-  const { mutate: globalMutate } = useSWRConfig();
 
-  // Poll domain data every 3 seconds while an agent run is active for this domain.
-  // Lives here (not inside the Agent tab) so it works regardless of which tab is visible.
+  // Poll only experiments + knowledge while an agent run is active.
+  // Avoids broad revalidation that causes the whole page to flash.
   useEffect(() => {
     if (!hasActiveRun || !id) return;
     const interval = setInterval(() => {
-      void globalMutate(
-        (key) => typeof key === "string" && key.startsWith(`/domains/${id}`),
-        undefined,
-        { revalidate: true },
-      );
+      void mutateExperiments();
+      void mutateKnowledge();
     }, 3000);
     return () => clearInterval(interval);
-  }, [hasActiveRun, id, globalMutate]);
+  }, [hasActiveRun, id, mutateExperiments, mutateKnowledge]);
 
   const handleExperimentClick = (experimentId: string) => {
     setHighlightExpId(experimentId);

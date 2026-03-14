@@ -2,10 +2,15 @@ import useSWR from "swr";
 import { apiFetch } from "@/lib/api";
 import type { AgentRun, ToolHint } from "@/types";
 
-// List all runs
+// List all runs (polls every 3s while any run is active)
 export function useAgentRuns() {
-  return useSWR<AgentRun[]>("/agent/runs", (url: string) =>
-    apiFetch<AgentRun[]>(url),
+  return useSWR<AgentRun[]>(
+    "/agent/runs",
+    (url: string) => apiFetch<AgentRun[]>(url),
+    {
+      refreshInterval: (data: AgentRun[] | undefined) =>
+        data?.some((r) => r.status === "running") ? 3000 : 0,
+    },
   );
 }
 

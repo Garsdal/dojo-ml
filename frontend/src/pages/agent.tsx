@@ -12,16 +12,21 @@ import type { ToolHint } from "@/types";
 export default function AgentPage() {
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const [isStarting, setIsStarting] = useState(false);
-  const { data: runs } = useAgentRuns();
+  const { data: runs, mutate: mutateRuns } = useAgentRuns();
 
   const handleStart = async (prompt: string, toolHints: ToolHint[]) => {
     setIsStarting(true);
     try {
       const run = await startAgentRun(prompt, undefined, toolHints);
       setActiveRunId(run.id);
+      void mutateRuns();
     } finally {
       setIsStarting(false);
     }
+  };
+
+  const handleRunDone = () => {
+    void mutateRuns();
   };
 
   return (
@@ -61,7 +66,7 @@ export default function AgentPage() {
               New Research
             </Button>
           </div>
-          <AgentRunView runId={activeRunId} />
+          <AgentRunView runId={activeRunId} onDone={handleRunDone} />
         </>
       )}
 

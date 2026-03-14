@@ -14,21 +14,32 @@ interface EventTimelineProps {
 
 export function EventTimeline({ events }: EventTimelineProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const bottomRef = useRef<HTMLDivElement>(null);
   const [showScrollBtn, setShowScrollBtn] = useState(false);
+  const isNearBottomRef = useRef(true);
 
-  const scrollToBottom = () => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  const scrollToBottom = (smooth = false) => {
+    if (!containerRef.current) return;
+    const el = containerRef.current;
+    if (smooth) {
+      el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+    } else {
+      el.scrollTop = el.scrollHeight;
+    }
   };
 
+  // Auto-scroll only if user is already near the bottom
   useEffect(() => {
-    scrollToBottom();
+    if (isNearBottomRef.current) {
+      scrollToBottom();
+    }
   }, [events.length]);
 
   const handleScroll = () => {
     if (!containerRef.current) return;
     const { scrollTop, scrollHeight, clientHeight } = containerRef.current;
-    setShowScrollBtn(scrollHeight - scrollTop - clientHeight > 100);
+    const distFromBottom = scrollHeight - scrollTop - clientHeight;
+    isNearBottomRef.current = distFromBottom < 150;
+    setShowScrollBtn(distFromBottom > 100);
   };
 
   if (events.length === 0) {
@@ -65,7 +76,11 @@ export function EventTimeline({ events }: EventTimelineProps) {
                 return null;
 
               case "tool_call":
-                if (parsed.kind === "code" || parsed.kind === "json" || parsed.kind === "structured") {
+                if (
+                  parsed.kind === "code" ||
+                  parsed.kind === "json" ||
+                  parsed.kind === "structured"
+                ) {
                   return (
                     <EventToolCall
                       key={event.id}
@@ -78,7 +93,11 @@ export function EventTimeline({ events }: EventTimelineProps) {
                 return null;
 
               case "tool_result":
-                if (parsed.kind === "text" || parsed.kind === "code" || parsed.kind === "json") {
+                if (
+                  parsed.kind === "text" ||
+                  parsed.kind === "code" ||
+                  parsed.kind === "json"
+                ) {
                   return (
                     <EventToolResult
                       key={event.id}
@@ -107,8 +126,16 @@ export function EventTimeline({ events }: EventTimelineProps) {
                   <EventDone
                     key={event.id}
                     turns={Number(event.data.turns ?? 0)}
-                    costUsd={event.data.cost_usd != null ? Number(event.data.cost_usd) : null}
-                    summary={event.data.summary ? String(event.data.summary) : undefined}
+                    costUsd={
+                      event.data.cost_usd != null
+                        ? Number(event.data.cost_usd)
+                        : null
+                    }
+                    summary={
+                      event.data.summary
+                        ? String(event.data.summary)
+                        : undefined
+                    }
                     timestamp={event.timestamp}
                   />
                 );
@@ -125,13 +152,12 @@ export function EventTimeline({ events }: EventTimelineProps) {
             }
           })}
         </div>
-        <div ref={bottomRef} />
       </div>
 
       {/* Scroll to bottom button */}
       {showScrollBtn && (
         <button
-          onClick={scrollToBottom}
+          onClick={() => scrollToBottom(true)}
           className="absolute bottom-2 right-2 bg-white border border-soft-fawn/30 rounded-full p-1.5 shadow-sm text-grey hover:text-blackberry transition-colors"
         >
           <ChevronDown className="h-4 w-4" />

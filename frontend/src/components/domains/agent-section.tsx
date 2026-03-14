@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useSWRConfig } from "swr";
 import { AgentPromptForm } from "@/components/agent/agent-prompt-form";
 import { AgentRunView } from "@/components/agent/agent-run-view";
 import { startAgentRun, useAgentRuns } from "@/hooks/use-agent";
@@ -14,7 +15,8 @@ interface AgentSectionProps {
 export function AgentSection({ domainId }: AgentSectionProps) {
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const [isStarting, setIsStarting] = useState(false);
-  const { data: runs } = useAgentRuns();
+  const { data: runs, mutate: mutateRuns } = useAgentRuns();
+  const { mutate: globalMutate } = useSWRConfig();
 
   const domainRuns = runs?.filter((r) => r.domain_id === domainId) ?? [];
 
@@ -23,9 +25,22 @@ export function AgentSection({ domainId }: AgentSectionProps) {
     try {
       const run = await startAgentRun(prompt, domainId, toolHints);
       setActiveRunId(run.id);
+      // Immediately revalidate runs list so domain-detail polling kicks in
+      void mutateRuns();
     } finally {
       setIsStarting(false);
     }
+  };
+
+  const handleRunDone = () => {
+    // Run finished/stopped — revalidate runs list and all domain data
+    void mutateRuns();
+    void globalMutate(
+      (key) =>
+        typeof key === "string" && key.startsWith(`/domains/${domainId}`),
+      undefined,
+      { revalidate: true },
+    );
   };
 
   return (
@@ -51,7 +66,9 @@ export function AgentSection({ domainId }: AgentSectionProps) {
       )}
 
       {/* Run view */}
-      {activeRunId && <AgentRunView runId={activeRunId} />}
+      {activeRunId && (
+        <AgentRunView runId={activeRunId} onDone={handleRunDone} />
+      )}
 
       {/* Previous runs */}
       {domainRuns.length > 0 && (

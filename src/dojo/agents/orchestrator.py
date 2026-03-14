@@ -126,12 +126,16 @@ class AgentOrchestrator:
             async for event in self.backend.execute(run.prompt):
                 run.events.append(event)
 
-                # Handle the result event (don't overwrite STOPPED status)
-                if event.event_type == "result" and run.status == RunStatus.RUNNING:
-                    run.result = _result_from_event(event)
-                    run.status = (
-                        RunStatus.FAILED if event.data.get("is_error") else RunStatus.COMPLETED
-                    )
+                # Handle the result event
+                if event.event_type == "result":
+                    result = _result_from_event(event)
+                    # Always capture the result data (even if stopped) for
+                    # accurate turns/cost, but only transition status if still running
+                    run.result = result
+                    if run.status == RunStatus.RUNNING:
+                        run.status = (
+                            RunStatus.FAILED if event.data.get("is_error") else RunStatus.COMPLETED
+                        )
 
                 # Handle error events
                 if event.event_type == "error" and run.status == RunStatus.RUNNING:
@@ -154,7 +158,15 @@ class AgentOrchestrator:
         if self._run:
             self._run.status = RunStatus.STOPPED
             self._run.completed_at = datetime.now(UTC)
-            self._run.completed_at = datetime.now(UTC)
+            # Build a partial result from events collected so far
+            if not self._run.result:
+                tool_calls = sum(
+                    1 for e in self._run.events if e.event_type == "tool_call"
+                )
+                self._run.result = AgentRunResult(
+                    session_id=None,
+                    num_turns=tool_calls,
+                )
 
 
 def _result_from_event(event: AgentEvent) -> AgentRunResult:

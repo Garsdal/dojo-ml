@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { StateBadge } from "@/components/state-badge";
 import { Button } from "@/components/ui/button";
 import { EventTimeline } from "@/components/agent/event-timeline";
@@ -8,11 +9,23 @@ import { Square } from "lucide-react";
 
 interface AgentRunViewProps {
   runId: string;
+  onDone?: () => void;
 }
 
-export function AgentRunView({ runId }: AgentRunViewProps) {
+export function AgentRunView({ runId, onDone }: AgentRunViewProps) {
   const { data: run, mutate } = useAgentRun(runId);
   const { events } = useAgentEvents(runId);
+  const prevStatusRef = useRef<string | undefined>(undefined);
+
+  const isRunning = run?.status === "running";
+
+  // Notify parent when run transitions out of "running"
+  useEffect(() => {
+    if (prevStatusRef.current === "running" && !isRunning) {
+      onDone?.();
+    }
+    prevStatusRef.current = run?.status;
+  }, [run?.status, isRunning, onDone]);
 
   if (!run) {
     return (
@@ -20,7 +33,6 @@ export function AgentRunView({ runId }: AgentRunViewProps) {
     );
   }
 
-  const isRunning = run.status === "running";
   const displayEvents = events.length > 0 ? events : run.events;
 
   // Derive live turn count from streamed events (each tool_call = 1 turn)
