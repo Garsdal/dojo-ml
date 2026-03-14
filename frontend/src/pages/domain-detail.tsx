@@ -1,9 +1,11 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
+import { useSWRConfig } from "swr";
 import { useDomain, updateDomain } from "@/hooks/use-domain";
 import { useDomainExperiments } from "@/hooks/use-domain-experiments";
 import { useDomainKnowledge } from "@/hooks/use-domain-knowledge";
 import { useDomainMetrics } from "@/hooks/use-domain-metrics";
+import { useAgentRuns } from "@/hooks/use-agent";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { StateBadge } from "@/components/state-badge";
@@ -40,7 +42,29 @@ export default function DomainDetailPage() {
   const { data: knowledge, isLoading: knLoading } = useDomainKnowledge(id);
   const { data: metrics, isLoading: metLoading } = useDomainMetrics(id);
   const [activeTab, setActiveTab] = useState("dashboard");
-  const [highlightExpId, setHighlightExpId] = useState<string | undefined>(undefined);
+  const [highlightExpId, setHighlightExpId] = useState<string | undefined>(
+    undefined,
+  );
+
+  const { data: agentRuns } = useAgentRuns();
+  const hasActiveRun =
+    agentRuns?.some((r) => r.domain_id === id && r.status === "running") ??
+    false;
+  const { mutate: globalMutate } = useSWRConfig();
+
+  // Poll domain data every 3 seconds while an agent run is active for this domain.
+  // Lives here (not inside the Agent tab) so it works regardless of which tab is visible.
+  useEffect(() => {
+    if (!hasActiveRun || !id) return;
+    const interval = setInterval(() => {
+      void globalMutate(
+        (key) => typeof key === "string" && key.startsWith(`/domains/${id}`),
+        undefined,
+        { revalidate: true },
+      );
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [hasActiveRun, id, globalMutate]);
 
   const handleExperimentClick = (experimentId: string) => {
     setHighlightExpId(experimentId);
@@ -71,10 +95,7 @@ export default function DomainDetailPage() {
     <div className="space-y-6">
       {/* Breadcrumb */}
       <Breadcrumb
-        items={[
-          { label: "Domains", href: "/" },
-          { label: domain.name },
-        ]}
+        items={[{ label: "Domains", href: "/" }, { label: domain.name }]}
       />
 
       {/* Header */}
@@ -92,25 +113,41 @@ export default function DomainDetailPage() {
         </div>
         <div className="flex items-center gap-2 shrink-0">
           {domain.status === "active" && (
-            <Button variant="outline" size="sm" onClick={() => handleStatusChange("paused")}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => handleStatusChange("paused")}
+            >
               <PauseCircle className="h-4 w-4" />
               Pause
             </Button>
           )}
           {domain.status === "paused" && (
-            <Button variant="outline" size="sm" onClick={() => handleStatusChange("active")}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => handleStatusChange("active")}
+            >
               <PlayCircle className="h-4 w-4" />
               Resume
             </Button>
           )}
           {(domain.status === "active" || domain.status === "paused") && (
-            <Button variant="outline" size="sm" onClick={() => handleStatusChange("completed")}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => handleStatusChange("completed")}
+            >
               <CheckCircle className="h-4 w-4" />
               Complete
             </Button>
           )}
           {domain.status !== "archived" && (
-            <Button variant="ghost" size="sm" onClick={() => handleStatusChange("archived")}>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => handleStatusChange("archived")}
+            >
               <Archive className="h-4 w-4" />
               Archive
             </Button>
@@ -121,10 +158,22 @@ export default function DomainDetailPage() {
       {/* Stat strip */}
       <div className="flex items-center gap-0 bg-wheat/10 rounded-xl overflow-hidden border border-soft-fawn/20">
         {[
-          { label: "Experiments", value: experiments?.length ?? domain.experiment_ids.length, tab: "experiments" },
-          { label: "Knowledge", value: knowledge?.length ?? "—", tab: "knowledge" },
+          {
+            label: "Experiments",
+            value: experiments?.length ?? domain.experiment_ids.length,
+            tab: "experiments",
+          },
+          {
+            label: "Knowledge",
+            value: knowledge?.length ?? "—",
+            tab: "knowledge",
+          },
           { label: "Tools", value: domain.tools.length, tab: "tools" },
-          { label: "Created", value: new Date(domain.created_at).toLocaleDateString(), tab: null },
+          {
+            label: "Created",
+            value: new Date(domain.created_at).toLocaleDateString(),
+            tab: null,
+          },
         ].map((stat, i) => (
           <div
             key={stat.label}
@@ -132,11 +181,15 @@ export default function DomainDetailPage() {
             className={cn(
               "flex-1 px-5 py-3",
               i < 3 ? "border-r border-soft-fawn/20" : "",
-              stat.tab ? "cursor-pointer hover:bg-wheat/20 transition-colors" : "",
+              stat.tab
+                ? "cursor-pointer hover:bg-wheat/20 transition-colors"
+                : "",
             )}
           >
             <div className="text-xs text-grey font-medium">{stat.label}</div>
-            <div className="text-lg font-bold text-blackberry mt-0.5">{stat.value}</div>
+            <div className="text-lg font-bold text-blackberry mt-0.5">
+              {stat.value}
+            </div>
           </div>
         ))}
       </div>
@@ -160,13 +213,20 @@ export default function DomainDetailPage() {
             {domain.workspace.path}
           </span>
           {!domain.workspace.ready && (
-            <SetupWorkspaceButton domainId={domain.id} onDone={() => mutate()} />
+            <SetupWorkspaceButton
+              domainId={domain.id}
+              onDone={() => mutate()}
+            />
           )}
         </div>
       )}
 
       {/* Tabbed content */}
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
+      <Tabs
+        value={activeTab}
+        onValueChange={setActiveTab}
+        className="space-y-4"
+      >
         <TabsList>
           <TabsTrigger value="dashboard" className="flex items-center gap-1.5">
             <LayoutDashboard className="h-3.5 w-3.5" />
@@ -176,7 +236,10 @@ export default function DomainDetailPage() {
             <Bot className="h-3.5 w-3.5" />
             Agent
           </TabsTrigger>
-          <TabsTrigger value="experiments" className="flex items-center gap-1.5">
+          <TabsTrigger
+            value="experiments"
+            className="flex items-center gap-1.5"
+          >
             <FlaskConical className="h-3.5 w-3.5" />
             Experiments
           </TabsTrigger>
@@ -225,13 +288,22 @@ export default function DomainDetailPage() {
         </TabsContent>
 
         <TabsContent value="metrics">
-          <ErrorBoundary fallback={<p className="text-sm text-grey">Failed to load metrics chart.</p>}>
+          <ErrorBoundary
+            fallback={
+              <p className="text-sm text-grey">Failed to load metrics chart.</p>
+            }
+          >
             <MetricEvolutionChart data={metrics} isLoading={metLoading} />
           </ErrorBoundary>
         </TabsContent>
 
         <TabsContent value="tools">
-          <ToolsSection domainId={domain.id} tools={domain.tools} hasWorkspace={domain.workspace !== null} onMutate={() => mutate()} />
+          <ToolsSection
+            domainId={domain.id}
+            tools={domain.tools}
+            hasWorkspace={domain.workspace !== null}
+            onMutate={() => mutate()}
+          />
         </TabsContent>
       </Tabs>
     </div>
@@ -263,7 +335,12 @@ function SetupWorkspaceButton({
 
   return (
     <div className="flex items-center gap-2">
-      <Button size="sm" variant="outline" onClick={handleSetup} disabled={loading}>
+      <Button
+        size="sm"
+        variant="outline"
+        onClick={handleSetup}
+        disabled={loading}
+      >
         {loading ? "Setting up…" : "Set up"}
       </Button>
       {error && <span className="text-xs text-danger">{error}</span>}

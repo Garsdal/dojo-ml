@@ -1,35 +1,15 @@
 import { useState, useEffect } from "react";
-import { useSWRConfig } from "swr";
 import type { AgentEvent } from "@/types";
 
 const API_BASE = import.meta.env.VITE_API_URL ?? "";
 
+// Pure SSE event collection — no revalidation logic.
+// Polling is handled at the page level (domain-detail) so it works
+// regardless of which tab is active.
 export function useAgentEvents(runId: string | undefined) {
   const [events, setEvents] = useState<AgentEvent[]>([]);
   const [done, setDone] = useState(false);
-  const { mutate } = useSWRConfig();
 
-  // Poll every 3 seconds while a run is active
-  useEffect(() => {
-    if (!runId || done) return;
-
-    const interval = setInterval(() => {
-      void mutate(
-        (key) =>
-          typeof key === "string" &&
-          (key.startsWith("/experiments") ||
-            key.startsWith("/domains") ||
-            key.startsWith("/knowledge") ||
-            key.startsWith("/agent")),
-        undefined,
-        { revalidate: true },
-      );
-    }, 3000);
-
-    return () => clearInterval(interval);
-  }, [runId, done, mutate]);
-
-  // SSE event stream — collect events only, no revalidation logic
   useEffect(() => {
     if (!runId) return;
 
