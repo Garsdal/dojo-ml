@@ -1,58 +1,75 @@
+import { useState, useMemo } from "react";
+import { Search } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { KnowledgeAtomCard } from "@/components/domains/knowledge-atom-card";
 import type { KnowledgeAtom } from "@/types";
 
 interface KnowledgeSectionProps {
   atoms: KnowledgeAtom[] | undefined;
   isLoading: boolean;
+  onEvidenceClick?: (experimentId: string) => void;
 }
 
-export function KnowledgeSection({ atoms, isLoading }: KnowledgeSectionProps) {
+export function KnowledgeSection({ atoms, isLoading, onEvidenceClick }: KnowledgeSectionProps) {
+  const [search, setSearch] = useState("");
+
+  const filtered = useMemo(() => {
+    if (!atoms) return [];
+    const q = search.toLowerCase();
+    if (!q) return atoms;
+    return atoms.filter(
+      (a) =>
+        a.claim.toLowerCase().includes(q) ||
+        a.context.toLowerCase().includes(q),
+    );
+  }, [atoms, search]);
+
   if (isLoading) {
-    return <p className="text-sm text-muted-foreground">Loading…</p>;
+    return <p className="text-sm text-grey">Loading…</p>;
   }
 
   if (!atoms || atoms.length === 0) {
     return (
-      <p className="text-sm text-muted-foreground">
-        No knowledge yet. The agent will accumulate knowledge during research
-        runs.
+      <p className="text-sm text-grey">
+        No knowledge yet. The agent will accumulate knowledge during research runs.
       </p>
     );
   }
 
   return (
     <div className="space-y-3">
-      {atoms.map((atom) => (
-        <div key={atom.id} className="rounded-lg border p-3 text-sm space-y-1">
-          <div className="flex items-center justify-between">
-            <span className="font-medium">{atom.claim}</span>
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <span>v{atom.version}</span>
-              <ConfidenceBar value={atom.confidence} />
-            </div>
-          </div>
-          <p className="text-xs text-muted-foreground">{atom.context}</p>
-          {atom.action && (
-            <p className="text-xs text-muted-foreground italic">
-              → {atom.action}
-            </p>
-          )}
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function ConfidenceBar({ value }: { value: number }) {
-  const pct = Math.round(value * 100);
-  return (
-    <div className="flex items-center gap-1">
-      <div className="h-1.5 w-12 rounded-full bg-secondary overflow-hidden">
-        <div
-          className="h-full rounded-full bg-foreground/60"
-          style={{ width: `${pct}%` }}
+      {/* Search */}
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-grey" />
+        <Input
+          placeholder="Search claims and context…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="pl-9 text-sm"
         />
       </div>
-      <span className="text-[10px] tabular-nums">{pct}%</span>
+
+      {/* Results count */}
+      {search && (
+        <p className="text-xs text-grey">
+          {filtered.length} of {atoms.length} results
+        </p>
+      )}
+
+      {/* Knowledge cards */}
+      {filtered.length === 0 && search ? (
+        <p className="text-sm text-grey py-4 text-center">No matching knowledge found.</p>
+      ) : (
+        <div className="space-y-2">
+          {filtered.map((atom) => (
+            <KnowledgeAtomCard
+              key={atom.id}
+              atom={atom}
+              onEvidenceClick={onEvidenceClick}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
