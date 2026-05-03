@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(git -C /Users/marcusgarsdal/Personal/Dojo log --oneline -30)"
+      "Bash(git -C /Users/marcusgarsdal/Personal/Dojo log --oneline -30)",
+      "Bash(uv build *)",
+      "Bash(uv tool *)"
     ],
     "additionalDirectories": [
       "/Users/marcusgarsdal/Personal/Dojo/docs"
