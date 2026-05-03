@@ -6,44 +6,22 @@
 > each run.
 
 ## Goal
-(describe the research goal)
+Get the lowest possible mae score on the test set of the california housing dataset
 
 ## Task type
 regression
 
 ## Dataset
-<!--
-Describe where the data lives and how to load it. The AI uses this to write
-load_data + evaluate. A few examples:
-
 - sklearn loader:
     Use `sklearn.datasets.fetch_california_housing(return_X_y=True)`.
     Features and target both come back as numpy arrays — no column names.
     https://scikit-learn.org/stable/modules/generated/sklearn.datasets.fetch_california_housing.html
 
-- Local CSV:
-    `./data/housing.csv` — features are every column except `MedHouseVal`,
-    target is `MedHouseVal`.
-
-- URL:
-    Download `https://example.com/data.csv` on first call (cache to `./data/`).
--->
-TODO — describe the dataset here.
-
 ## Target
-<!--
-What is the model predicting? A single sentence is enough.
-For sklearn-style (X, y) datasets, just describe the target — there is no
-column name.
--->
-TODO — describe the target.
+The y loaded from the dataset above
 
 ## Success
-<!--
-How do you know the agent did well? RMSE under some threshold, beating a
-linear baseline, etc. The agent reads this and uses it to plan experiments.
--->
-TODO — describe what success looks like.
+Start simple and iterate. The success is improvement over iterations
 
 ## Contract (do not edit — generated tools are pinned to this)
 - The agent owns `train()` and any model / hyperparameter logic, called via
