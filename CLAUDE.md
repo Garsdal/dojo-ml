@@ -1,6 +1,6 @@
 # CLAUDE.md — Working in the Dojo.ml repo
 
-> Reference for Claude Code (and me) when making changes here. Optimised for "what do I touch and how" rather than vision/strategy. For vision, see [MASTER_PLAN.md](MASTER_PLAN.md). For the strategic positioning of the project, see the "Positioning" section below.
+> Reference for Claude Code (and me) when making changes here. Optimised for "what do I touch and how" rather than vision/strategy. For vision, see [docs/MASTER_PLAN.md](docs/MASTER_PLAN.md). For the strategic positioning of the project, see the "Positioning" section below. For releasing to PyPI, see [docs/RELEASING.md](docs/RELEASING.md).
 
 ---
 

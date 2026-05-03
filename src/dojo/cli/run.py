@@ -26,7 +26,7 @@ console = Console()
 logger = get_logger(__name__)
 
 
-# Exit codes per NEXT_STEPS.md CLI conventions
+# Exit codes per docs/NEXT_STEPS.md CLI conventions
 EXIT_USER_ERROR = 1
 EXIT_SYSTEM_ERROR = 2
 EXIT_TASK_NOT_READY = 3

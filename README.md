@@ -217,4 +217,4 @@ tests/          # unit, integration, e2e
 | `GET` | `/knowledge?domain_id=` | List knowledge atoms |
 | `GET` | `/health` | Health check |
 
-For architecture, conventions, and "how do I add X" recipes, see [CLAUDE.md](CLAUDE.md). For vision and the typed-Task design, see [MASTER_PLAN.md](MASTER_PLAN.md). For the ordered delivery punch-list, see [NEXT_STEPS.md](NEXT_STEPS.md).
+For architecture, conventions, and "how do I add X" recipes, see [CLAUDE.md](CLAUDE.md). For vision and the typed-Task design, see [docs/MASTER_PLAN.md](docs/MASTER_PLAN.md). For the ordered delivery punch-list, see [docs/NEXT_STEPS.md](docs/NEXT_STEPS.md). For the PyPI release process, see [docs/RELEASING.md](docs/RELEASING.md).
