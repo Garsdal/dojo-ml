@@ -1,5 +1,6 @@
 """Domains router — CRUD + tool management for research domains."""
 
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
@@ -9,6 +10,7 @@ from dojo.core.domain import Domain, DomainStatus, DomainTool, ToolType
 from dojo.core.task import Task, TaskType
 from dojo.runtime.domain_service import DomainService
 from dojo.runtime.lab import LabEnvironment
+from dojo.runtime.program_loader import load_program
 from dojo.runtime.task_service import TaskFrozenError, TaskService, TaskVerificationError
 from dojo.runtime.tool_verifier import verify_required_tools
 from dojo.tools.tool_generation import (
@@ -519,13 +521,19 @@ async def generate_tools(
         )
 
     if domain.task is not None:
-        prompt = build_task_generation_prompt(domain, domain.task, hint=body.hint)
+        program_md = load_program(domain, base_dir=Path(lab.settings.storage.base_dir))
+        prompt = build_task_generation_prompt(
+            domain, domain.task, hint=body.hint, program_md=program_md
+        )
     else:
         prompt = build_tool_generation_prompt(domain, hint=body.hint)
 
     from dojo.agents.factory import create_agent_backend
 
-    backend = create_agent_backend(lab.settings.agent.backend)
+    backend = create_agent_backend(
+        lab.settings.agent.backend,
+        model=lab.settings.agent.tool_generation_model,
+    )
 
     try:
         raw_output = await backend.complete(prompt)

@@ -86,10 +86,11 @@ async def test_executable_tool_uses_workspace(lab, tmp_path: Path):
 
 
 def test_build_tool_script_injects_args():
-    """_build_tool_script injects args as local variables."""
+    """_build_tool_script emits direct assignments so vars survive imports/scoping."""
     script = _build_tool_script("x = name\nprint(x)", {"name": "test_value"})
-    assert "_args" in script
-    assert "test_value" in script
+    assert "name = 'test_value'" in script
+    assert "x = name" in script
+    assert script.index("name = 'test_value'") < script.index("x = name")
 
 
 async def test_executable_tool_error_on_failure(lab):
@@ -167,8 +168,9 @@ async def test_executable_tool_no_stdout(lab):
 def test_build_tool_script_empty_args():
     """_build_tool_script handles empty args dict."""
     script = _build_tool_script("print('hello')", {})
-    assert "_args" in script
     assert "print('hello')" in script
+    # No phantom assignments when there's nothing to inject
+    assert "= " not in script.split("# --- tool code ---")[0]
 
 
 def test_tool_def_description_includes_return_description(lab):

@@ -2,11 +2,27 @@
 
 import asyncio
 import os
+import re
 import tempfile
 import time
 from pathlib import Path
 
 from dojo.interfaces.sandbox import ExecutionResult, Sandbox
+
+_NAME_SAFE = re.compile(r"[^a-zA-Z0-9_-]+")
+
+
+def _safe_script_filename(name: str | None, code: str) -> str:
+    """Pick a filename for the sandbox script.
+
+    With ``name``, returns ``{slug}.py`` (slug stripped to a-z, A-Z, 0-9, _ , -).
+    Without, falls back to a uniquish ``_dojo_<id>.py`` so concurrent runs
+    don't clobber each other.
+    """
+    if name:
+        slug = _NAME_SAFE.sub("_", name).strip("_") or "tool"
+        return f"{slug}.py"
+    return f"_dojo_{id(code)}.py"
 
 
 class LocalSandbox(Sandbox):
@@ -24,6 +40,7 @@ class LocalSandbox(Sandbox):
         python_path: str | None = None,
         env_vars: dict[str, str] | None = None,
         timeout: float | None = None,
+        name: str | None = None,
     ) -> ExecutionResult:
         """Execute code in a subprocess, optionally in a workspace context."""
         if language != "python":
@@ -33,7 +50,7 @@ class LocalSandbox(Sandbox):
         effective_python = python_path or "python"
         work_dir = cwd or tempfile.mkdtemp()
 
-        script_path = Path(work_dir) / f"_dojo_{id(code)}.py"
+        script_path = Path(work_dir) / _safe_script_filename(name, code)
         script_path.write_text(code)
 
         env = {**os.environ, **(env_vars or {})}

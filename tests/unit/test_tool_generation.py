@@ -3,7 +3,9 @@
 import pytest
 
 from dojo.core.domain import Domain, DomainTool, ToolType
+from dojo.core.task import Task, TaskType
 from dojo.tools.tool_generation import (
+    build_task_generation_prompt,
     build_tool_generation_prompt,
     dicts_to_domain_tools,
     parse_generated_tools,
@@ -121,3 +123,40 @@ def test_parse_multiple_tools():
     assert len(tools) == 2
     assert tools[0]["name"] == "loader"
     assert tools[1]["name"] == "eval"
+
+
+# --- Phase 3.5: registry-aware prompt + PROGRAM.md threading -----------------
+
+
+def test_build_task_generation_prompt_uses_regression_template():
+    """For regression, the registry-specific template is used (not the generic one)."""
+    domain = Domain(name="housing", description="predict house prices")
+    task = Task(type=TaskType.REGRESSION, config={})
+    prompt = build_task_generation_prompt(domain, task)
+    # Regression-specific markers — would not appear in the generic prompt
+    assert "load_data" in prompt
+    assert "evaluate" in prompt
+    assert "rmse" in prompt
+    assert "r2" in prompt
+    assert "mae" in prompt
+
+
+def test_build_task_generation_prompt_threads_program_md():
+    """Phase 3.5: PROGRAM.md content is fenced into the prompt as the user's spec."""
+    domain = Domain(name="housing", description="d")
+    task = Task(type=TaskType.REGRESSION, config={})
+    program = "## Dataset\nUse sklearn.datasets.fetch_california_housing(return_X_y=True).\n"
+    prompt = build_task_generation_prompt(domain, task, program_md=program)
+    assert "PROGRAM.md" in prompt
+    assert "fetch_california_housing" in prompt
+    # Empty config fields should signal "use PROGRAM.md" rather than literal "(unset)"
+    assert "use PROGRAM.md" in prompt
+
+
+def test_build_task_generation_prompt_handles_empty_program_md():
+    """No PROGRAM.md means no fenced spec — but the prompt still works."""
+    domain = Domain(name="d", description="d")
+    task = Task(type=TaskType.REGRESSION, config={"data_path": "/tmp/x.csv"})
+    prompt = build_task_generation_prompt(domain, task)  # program_md default ""
+    assert "empty" in prompt
+    assert "/tmp/x.csv" in prompt

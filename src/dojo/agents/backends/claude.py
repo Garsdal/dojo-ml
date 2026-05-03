@@ -24,11 +24,20 @@ class ClaudeAgentBackend(AgentBackend):
     Uses ClaudeSDKClient for session management, streaming, and interruption.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, model: str | None = None) -> None:
+        """Construct a Claude backend.
+
+        Args:
+            model: Optional model id (e.g. ``"claude-sonnet-4-6"``). When set,
+                ``complete()`` passes ``--model <id>`` to the ``claude`` CLI so
+                tool generation uses a known, capable model rather than
+                whatever the user has configured as the local default.
+        """
         self._client: Any = None
         self._options: Any = None
         self._tool_adapter = ClaudeToolAdapter()
         self._tool_defs: list[ToolDef] = []
+        self._model = model
 
     async def configure(
         self,
@@ -118,23 +127,31 @@ class ClaudeAgentBackend(AgentBackend):
         """One-shot completion via the claude CLI subprocess.
 
         Uses the same auth path as agent runs — no ANTHROPIC_API_KEY needed.
-        The -p / --print flag runs claude non-interactively and prints the response.
+        Passes ``--model <id>`` when a model was specified at construction.
         """
         import asyncio
 
+        argv = ["claude", "-p"]
+        if self._model:
+            argv.extend(["--model", self._model])
+        argv.append(prompt)
+
         proc = await asyncio.create_subprocess_exec(
-            "claude",
-            "-p",
-            prompt,
+            *argv,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120.0)
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=300.0)
         if proc.returncode != 0:
             raise RuntimeError(
                 f"claude -p failed (exit {proc.returncode}): {stderr.decode().strip()}"
             )
         return stdout.decode().strip()
+
+    @property
+    def model(self) -> str | None:
+        """Model id used for ``complete()`` (None means CLI default)."""
+        return self._model
 
     @property
     def name(self) -> str:

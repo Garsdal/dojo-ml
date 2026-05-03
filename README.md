@@ -49,28 +49,78 @@ Inspired by [Karpathy's autoresearch](https://github.com/karpathy/autoresearch) 
 - Python 3.13+
 - [uv](https://docs.astral.sh/uv/)
 - [just](https://github.com/casey/just)
-- Node.js 18+ (frontend)
-
-## Quick Start
+- The `claude` CLI logged in (Claude Code) — Dojo shells out to it; no `ANTHROPIC_API_KEY` needed
+- Node.js 18+ (only if you want the web UI)
 
 ```bash
-# 1. Install all dependencies
-just dev
-
-# 2. Run with stub agent (no API key needed — great for exploring)
-just run-stub
-
-# 3. Run with Claude agent (uses your Claude Code CLI subscription)
-just run-claude
+just dev                     # install backend + frontend deps
 ```
 
-Backend → `http://localhost:8000` · Frontend → `http://localhost:5173`
+## Getting Started — California Housing in 4 commands
 
-## Claude Authentication
+The CLI is a peer of the HTTP API, not a thin wrapper around it. The whole happy path runs in-process — no server needed.
 
-Dojo uses the `claude` CLI as a subprocess — it inherits whatever account you're already logged into. **No API key needed** for regular agent runs if you have Claude Code installed.
+```bash
+mkdir housing && cd housing
 
-`ANTHROPIC_API_KEY` is only required for AI-assisted domain tool generation (`POST /domains/{id}/generate-tools`).
+# 1. Scaffold the domain (creates .dojo/, the regression Task, and PROGRAM.md)
+dojo init --name housing --task-type regression --non-interactive
+
+# 2. Describe the dataset, target, and what success looks like
+$EDITOR PROGRAM.md
+
+# 3. AI generates load_data + evaluate from PROGRAM.md, verifies them against
+#    the regression contract, and freezes the task. Re-run after edits.
+dojo task setup
+
+# 4. Run the agent — events stream live to your terminal
+dojo run --max-turns 30
+```
+
+A reasonable starter `PROGRAM.md` for California housing:
+
+```markdown
+## Goal
+Predict California median house value (regression). Minimise RMSE on a 20% held-out test split.
+
+## Dataset
+Use `sklearn.datasets.fetch_california_housing(return_X_y=True)`.
+Features and target both come back as numpy arrays — no column names needed.
+https://scikit-learn.org/stable/modules/generated/sklearn.datasets.fetch_california_housing.html
+
+## Target
+Median house value (in $100,000s) for census blocks in California.
+
+## Success
+Beat a linear baseline. Try at least one tree-based model. Avoid overfitting.
+```
+
+What happens under the hood:
+
+- **`dojo init`** writes `.dojo/config.yaml`, creates the domain + regression task with `expected_metrics = [rmse, r2, mae]`, scaffolds `PROGRAM.md`, and sets `current_domain_id`.
+- **`dojo task setup`** reads `PROGRAM.md`, asks the AI to generate `load_data` + `evaluate`, runs each tool in a sandbox against its `ToolContract`, and freezes the task. Verification failures tell you which tool failed and why — fix `PROGRAM.md` (or the tool code) and re-run.
+- **`dojo run`** starts the agent in-process. The agent writes training code; `load_data` and `evaluate` stay frozen. The metric dict from `evaluate` is the only source of truth — `complete_experiment` rejects metric keys outside the contract, so the agent can't smuggle in custom numbers.
+
+Useful neighbours:
+
+```bash
+dojo task show               # current task status, tools, frozen?
+dojo runs ls                 # recent runs
+dojo runs show               # last run's events + cost
+dojo program show            # print the live PROGRAM.md
+dojo domain use <name>       # switch active domain
+```
+
+## Running the server (optional)
+
+If you want the web UI or HTTP API:
+
+```bash
+just run-stub                # stub agent (no LLM, deterministic)
+just run-claude              # Claude agent (uses your local CLI auth)
+```
+
+Backend → `http://localhost:8000` · Frontend → `http://localhost:5173`. The server reads the same `.dojo/` your CLI commands write to, so a CLI-started run is visible in the UI and vice versa.
 
 ---
 
@@ -109,12 +159,15 @@ just format     # auto-fix lint + format
 ```
 src/dojo/
   core/         # Domain, Task, Experiment, KnowledgeAtom, Workspace, state machine
-  agents/       # AgentBackend ABC + Claude / Stub backends
+  agents/       # AgentBackend ABC + Claude / Stub backends, orchestrator
   api/          # FastAPI app + routers (/domains, /experiments, /knowledge, /agent)
+  cli/          # Typer CLI: init, run, task, runs, program, domain, config, start
   tools/        # Agent tools (experiments, knowledge, tracking) + AI tool generation
-  runtime/      # LabEnvironment (DI container), ExperimentService, KnowledgeLinker
-  storage/      # Local JSON adapters (domain, experiment, knowledge)
-  tracking/     # FileTracker, MlflowTracker
+  runtime/      # LabEnvironment (DI), ExperimentService, ToolVerifier, program loader
+  sandbox/      # LocalSandbox (subprocess); runs generated tools + agent code
+  compute/      # Compute backends (LocalCompute today)
+  storage/      # Local JSON adapters (domain, experiment, knowledge, run)
+  tracking/     # FileTracker, MlflowTracker, NoopTracker
   config/       # pydantic-settings + YAML config
 frontend/       # React 19 + Vite 7 + shadcn/ui (currently de-prioritized)
 tests/          # unit, integration, e2e
@@ -127,9 +180,11 @@ tests/          # unit, integration, e2e
 | Method | Path | Description |
 |--------|------|-------------|
 | `POST` | `/domains` | Create a research domain |
-| `POST` | `/domains/{id}/tools/generate` | AI-generate `load_data` / `evaluate` tools for the task |
+| `POST` | `/domains/{id}/task` | Attach a Task (regression today) |
+| `POST` | `/domains/{id}/tools/generate` | AI-generate `load_data` / `evaluate` from PROGRAM.md, verify against contract |
+| `POST` | `/domains/{id}/task/freeze` | Freeze the task — gated on every required tool's verification |
 | `POST` | `/domains/{id}/workspace/setup` | One-time workspace prep (venv + deps) |
-| `POST` | `/agent/run` | Start an agent run on a domain |
+| `POST` | `/agent/run` | Start an agent run on a domain (requires a frozen task) |
 | `GET` | `/agent/runs/{id}/events` | Live SSE event stream |
 | `GET` | `/experiments?domain_id=` | List experiments |
 | `GET` | `/knowledge?domain_id=` | List knowledge atoms |

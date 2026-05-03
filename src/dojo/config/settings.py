@@ -67,6 +67,10 @@ class AgentSettings(BaseSettings):
     max_budget_usd: float | None = None  # Max spend per run (None = unlimited)
     permission_mode: str = "acceptEdits"  # Permission mode (backend-specific)
     cwd: str | None = None  # Working directory for code execution
+    # Model used for one-shot tool generation (`dojo task generate` / `setup`).
+    # Sonnet 4.6 is a sensible default — strong enough to write correct sklearn
+    # tool code, fast enough to keep the spinner short.
+    tool_generation_model: str = "claude-sonnet-4-6"
 
 
 class Settings(BaseSettings):

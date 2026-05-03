@@ -166,6 +166,33 @@ async def test_verify_required_tools_evaluate_fails_when_load_data_fails():
     assert any("y_pred" in e for e in evaluate.verification.errors)
 
 
+async def test_verifier_handles_imports_between_injection_and_use():
+    """Regression: AI-generated code often does ``import x`` between fixture
+    injection and ``y_pred`` reference. The old `locals()[k] = v` pattern broke
+    in this layout (NameError); direct `name = <repr>` assignment survives it.
+    """
+    code = """\
+import json
+import numpy as np
+
+# Imports between the wrapper's assignment and the use
+y_pred_arr = np.array(y_pred)
+print(json.dumps({
+    "rmse": float(y_pred_arr.sum()),
+    "r2": 1.0,
+    "mae": 0.0,
+}))
+"""
+    tool = _spec_tool("evaluate", code, params={"y_pred": {"type": "array"}})
+    v = ToolVerifier(LocalSandbox())
+    result = await v.verify(
+        tool, _EVAL_CONTRACT, workspace=None, fixtures={"y_pred": [1.0, 2.0, 3.0]}
+    )
+    assert result.verified is True, result.errors
+    # rmse came from y_pred.sum() — proves y_pred was actually accessible
+    assert result.sample_output["rmse"] == 6.0
+
+
 async def test_verifier_handles_arbitrary_contract():
     """Verifier should work with custom contracts, not just regression."""
     custom = ToolContract(

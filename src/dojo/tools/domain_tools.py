@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import textwrap
 from typing import Any
 
 from dojo.core.domain import Domain, DomainTool
@@ -103,6 +102,7 @@ async def _execute_domain_tool(
         cwd=cwd,
         python_path=python_path,
         env_vars=env_vars,
+        name=tool.name,
     )
 
     if result.exit_code != 0:
@@ -123,18 +123,11 @@ async def _execute_domain_tool(
 
 
 def _build_tool_script(code: str, args: dict[str, Any]) -> str:
-    """Wrap tool code in a script that injects args and prints JSON result."""
-    args_json = json.dumps(args)
+    """Wrap tool code in a script that injects args as module globals.
 
-    return textwrap.dedent(f"""\
-        import json as _json
-        import sys as _sys
-
-        # Inject tool arguments as local variables
-        _args = _json.loads({args_json!r})
-        for _k, _v in _args.items():
-            locals()[_k] = _v
-
-        # Execute the tool code
-        {textwrap.indent(code, "        ").strip()}
-    """)
+    We emit `name = <python-literal>` assignments rather than `locals()[k] = v`,
+    which is brittle across scopes (a variable looked up after an `import` or
+    inside a comprehension can fail to resolve, depending on Python version).
+    """
+    assignments = "".join(f"{name} = {value!r}\n" for name, value in args.items())
+    return f"# --- injected tool arguments ---\n{assignments}\n# --- tool code ---\n{code}\n"

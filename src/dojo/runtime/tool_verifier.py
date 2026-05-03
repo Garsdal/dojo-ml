@@ -17,7 +17,6 @@ Returns a `VerificationResult` populated on the tool itself.
 from __future__ import annotations
 
 import json
-import textwrap
 import time
 from datetime import UTC, datetime
 from typing import Any
@@ -83,6 +82,7 @@ class ToolVerifier:
             python_path=python_path,
             env_vars=env_vars,
             timeout=self.timeout,
+            name=tool.name or contract.name,
         )
         duration_ms = (time.monotonic() - start) * 1000.0
 
@@ -254,22 +254,15 @@ def _build_fixtures(
 
 
 def _wrap_for_execution(code: str, params: dict[str, Any]) -> str:
-    """Wrap tool code so injected params become local variables.
+    """Wrap tool code so injected params are available as module globals.
 
-    Mirrors the pattern in `tools/domain_tools.py::_build_tool_script` so the
-    verifier's execution environment matches the runtime MCP-handler one.
+    We emit a direct `name = <python-literal>` assignment for each fixture.
+    This is more reliable than `locals()[k] = v` (which is brittle across
+    scopes — and across Python versions) and gives a much clearer script for
+    debugging when something goes wrong.
     """
-    args_json = json.dumps(params)
-    return textwrap.dedent(f"""\
-        import json as _json
-
-        _args = _json.loads({args_json!r})
-        for _k, _v in _args.items():
-            locals()[_k] = _v
-
-        # Tool code begins
-        {textwrap.indent(code, "        ").strip()}
-    """)
+    assignments = "".join(f"{name} = {value!r}\n" for name, value in params.items())
+    return f"# --- injected fixtures ---\n{assignments}\n# --- tool code ---\n{code}\n"
 
 
 def _workspace_args(

@@ -20,13 +20,28 @@ logger = get_logger(__name__)
 _VALID_TYPES = {t.value for t in ToolType}
 
 
-def build_task_generation_prompt(domain: Domain, task: Task, hint: str = "") -> str:
+def build_task_generation_prompt(
+    domain: Domain,
+    task: Task,
+    hint: str = "",
+    *,
+    program_md: str = "",
+) -> str:
     """Registry-aware prompt builder.
 
     For task types with a `generation_prompt_template` in `TASK_TYPE_REGISTRY`,
     the contract-specific template is used (so generated tools match the exact
     return shape the verifier expects). Falls back to the generic
     `build_tool_generation_prompt` for unknown types.
+
+    Args:
+        domain: The domain the task belongs to (provides name + description).
+        task: The task — `task.config` carries optional structured hints.
+        hint: Extra user-supplied hint (typically from `dojo task generate --hint`).
+        program_md: The contents of PROGRAM.md, treated as the user's natural-
+            language spec. The AI is told to prefer this over `task.config`
+            fields when they conflict — most users will leave config fields
+            empty and describe the dataset in PROGRAM.md instead.
     """
     spec = TASK_TYPE_REGISTRY.get(task.type)
     if spec is None or task.type != TaskType.REGRESSION:
@@ -36,11 +51,27 @@ def build_task_generation_prompt(domain: Domain, task: Task, hint: str = "") -> 
     return spec.generation_prompt_template.format(
         domain_name=domain.name,
         domain_description=domain.description or "(no description)",
-        data_path=cfg.get("data_path", "(unset)"),
-        target_column=cfg.get("target_column", "(unset)"),
+        program_md_section=_format_program_md(program_md),
+        data_path=cfg.get("data_path") or "(not set — use PROGRAM.md)",
+        target_column=cfg.get("target_column") or "(not set — use PROGRAM.md)",
         test_split_ratio=cfg.get("test_split_ratio", 0.2),
-        feature_columns=cfg.get("feature_columns", []),
+        feature_columns=cfg.get("feature_columns") or "(not set — use PROGRAM.md)",
         hint_section=f"Additional hints from the user:\n{hint}\n" if hint else "",
+    )
+
+
+def _format_program_md(content: str) -> str:
+    """Render the PROGRAM.md block of the generation prompt.
+
+    Empty content gets a short stub so the model knows the user didn't write
+    anything special; non-empty content gets fenced off so the model sees it
+    as data, not instructions.
+    """
+    body = content.strip()
+    if not body:
+        return "## PROGRAM.md\n(empty — fall back entirely to the structured hints below)\n"
+    return (
+        f"## PROGRAM.md (the user's spec — this is the source of truth)\n```markdown\n{body}\n```\n"
     )
 
 

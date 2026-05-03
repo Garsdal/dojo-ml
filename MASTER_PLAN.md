@@ -13,12 +13,16 @@ Dojo runs **controlled, reproducible ML experiments on your existing pipelines a
 The structural insight: the framework, not the agent, owns evaluation. Agents are creative but unreliable; their reports of their own performance are not. So we draw a hard line:
 
 ```
-prepare.py        → load_data tool + evaluate tool          (frozen — framework + human + AI at setup)
-train.py          → run_experiment_code per experiment      (mutable — agent edits)
-program.md        → Domain.prompt (steering prompt)         (human edits between runs)
+load_data.py      → frozen Python module, function `load_data()`     (framework calls it)
+evaluate.py       → frozen Python module, function `evaluate(y_pred)` (framework calls it)
+train.py          → run_experiment_code per experiment               (mutable — agent writes)
+predictions.json  → train.py's only output: a list of y_pred         (agent → framework hand-off)
+PROGRAM.md        → Domain.prompt (steering prompt)                  (human edits between runs)
 ```
 
 This is the [Karpathy autoresearch](https://github.com/karpathy/autoresearch) split — `prepare.py` is fixed, `train.py` is fair game, `program.md` is what the human iterates on. We're generalising that pattern beyond LLM training so it works for any well-defined ML problem class — starting with regression.
+
+`load_data.py` and `evaluate.py` are AI-generated at setup time, then human-reviewed, then frozen by copying them into `.dojo/domains/{id}/tools/`. At experiment time the agent writes a `train.py` that imports `load_data`, trains a model, and saves `y_pred` to `predictions.json`. The framework — never the agent — calls `evaluate(y_pred)` to compute the recorded metric. The agent's `train.py` is a normal Python script: no wrapping, no auto-prologue, no fixture injection.
 
 ### Why a framework, not a script
 
@@ -35,13 +39,13 @@ Anyone can wire Claude up to a Jupyter notebook for an evening. What we're build
 Domain (human-defined)
   ├── Workspace                   — pre-configured execution env (local repo / git url / empty)
   ├── Task (typed, currently only RegressionTask)
-  │     ├── load_data tool        — frozen at task-freeze time
-  │     └── evaluate tool         — frozen at task-freeze time
+  │     ├── load_data.py module   — frozen function `load_data()`, copied to canonical path at freeze
+  │     └── evaluate.py module    — frozen function `evaluate(y_pred)`, copied to canonical path at freeze
   └── Experiments                 — agent-created, many per domain
         └── Knowledge atoms       — produced, linked across experiments via KnowledgeLinker
 ```
 
-The Task pins the contract; the agent operates inside it. Knowledge is the framework's long-term output.
+The Task pins the contract; the agent operates inside it. The frozen modules live in `<workspace>/` (visible, editable until freeze) and `.dojo/domains/{id}/tools/` (canonical, read-first via `PYTHONPATH`). Knowledge is the framework's long-term output.
 
 ---
 
@@ -181,10 +185,25 @@ class Task:
 
 ```python
 @dataclass
+class ToolContract:
+    """Describes a frozen tool — a Python module + function the framework calls.
+
+    The verifier imports the module and calls the function with synthetic inputs;
+    `params_schema` and `returns_schema` describe the function signature, not a
+    stdout-JSON shape.
+    """
+    name: str                         # logical tool name, e.g. "load_data"
+    module_filename: str              # file on disk, e.g. "load_data.py"
+    entrypoint: str                   # function to call, e.g. "load_data"
+    description: str
+    params_schema: dict[str, str]     # function parameters
+    returns_schema: dict[str, str]    # function return value
+
+@dataclass
 class TaskTypeSpec:
     default_metric: str
     default_direction: Direction
-    required_tools: list[ToolContract]    # spec of tools that must be present and frozen
+    required_tools: list[ToolContract]    # modules that must exist + verify before freeze
     generation_prompt_template: str       # input to AI tool generation
     config_schema: dict                   # JSON schema for Task.config (e.g., target_column, test_split)
 
@@ -195,12 +214,17 @@ TASK_TYPE_REGISTRY: dict[TaskType, TaskTypeSpec] = {
         required_tools=[
             ToolContract(
                 name="load_data",
+                module_filename="load_data.py",
+                entrypoint="load_data",
                 description="Load and split the dataset",
+                params_schema={},
                 returns_schema={"X_train": "array", "X_test": "array",
                                 "y_train": "array", "y_test": "array"},
             ),
             ToolContract(
                 name="evaluate",
+                module_filename="evaluate.py",
+                entrypoint="evaluate",
                 description="Evaluate predictions against y_test",
                 params_schema={"y_pred": "array"},
                 returns_schema={"rmse": "float", "r2": "float", "mae": "float"},
@@ -214,9 +238,9 @@ TASK_TYPE_REGISTRY: dict[TaskType, TaskTypeSpec] = {
 
 #### What "frozen" means concretely
 
-- `Task.frozen = False`: tools can be regenerated, edited, swapped. Agent runs are blocked.
-- User clicks "Approve & freeze task" (or `POST /domains/{id}/task/freeze`) → `frozen = True`.
-- Once frozen, every subsequent agent run loads the *exact same* tool definitions. The agent cannot modify them. Editing a frozen task requires explicitly unfreezing (which invalidates prior experiment comparisons — surface this in UI later).
+- `Task.frozen = False`: tool files live in the workspace, the user (or AI regeneration) can edit them. Agent runs are blocked.
+- User runs `dojo task freeze` (or `POST /domains/{id}/task/freeze`) → framework copies each `module_filename` from the workspace into `.dojo/domains/{id}/tools/`, computes SHA-256 hashes, stores them on `task.config["tool_hashes"]`, sets `frozen = True`.
+- Once frozen, every subsequent agent run resolves `from load_data import load_data` and `from evaluate import evaluate` from the canonical dir (it sits first on `PYTHONPATH`). The agent overwriting `<workspace>/evaluate.py` is a no-op for recorded metrics. Editing a frozen task requires explicitly unfreezing (which invalidates prior experiment comparisons — surface this in UI later).
 
 ### 3.3 Workspace (existing, no changes)
 
@@ -238,35 +262,57 @@ The current [`KeywordKnowledgeLinker`](src/dojo/runtime/keyword_linker.py) is fi
 
 This is the section that justifies the whole design. If this is wrong, nothing else matters.
 
+### The four-tool-call experiment loop
+
+The agent runs every experiment as a four-call sequence. Each call does one thing:
+
+| # | Tool | Owner | Side effects |
+|---|---|---|---|
+| 1 | `create_experiment(domain_id, hypothesis)` | Agent | Returns `experiment_id`. State PENDING → RUNNING. |
+| 2 | `run_experiment_code(experiment_id, train_code)` | Agent → framework | Saves `train_code` as `.dojo/artifacts/experiments/{id}/_dojo_train_<N>.py`. Runs it as a normal Python script in the workspace with canonical-tools-first `PYTHONPATH`. Returns `{stdout, stderr, exit_code}`. **No metric handling.** |
+| 3 | `evaluate_experiment(experiment_id)` | Framework | Reads `<workspace>/predictions.json`. Imports `evaluate` from the canonical path. Calls `evaluate(y_pred)`. Records metrics. State RUNNING → COMPLETED. Returns the metric dict. |
+| 4 | `write_knowledge(experiment_id, claim, ...)` | Agent | Records the learning. |
+
+The agent never:
+- handles the `y_pred` array as a tool-call parameter;
+- imports `evaluate` directly;
+- decides what value gets recorded as the metric.
+
+The framework owns evaluation — completely. The agent's only contribution to the metric is `y_pred` (a list it writes to `predictions.json`). If the agent's `y_pred` is good, the metric is good. If `y_pred` is bad, the metric reflects bad predictions evaluated honestly.
+
 ### What the agent can do during a run
 
-- Call `load_data` → returns the pre-split data. The agent never sees the un-split data and never picks the split.
-- Write training code → submit it via `run_experiment_code`. This is the agent's mutable surface.
-- Call `evaluate(y_pred)` → frozen tool, returns the metric dict including the primary metric.
-- Call `log_metrics(metrics)` → records the metric dict to `TrackingConnector`.
-- Call `write_knowledge(...)` → routes through `KnowledgeLinker`, records a finding.
+- Write training code and submit it via `run_experiment_code` — the only mutable surface.
+- Call `log_metrics(metrics)` for hyperparameter tracking and aux measurements (NOT the primary metric — that comes from `evaluate_experiment`).
+- Call `write_knowledge(...)` to record findings.
 
 ### What the agent cannot do
 
-- Modify `load_data` or `evaluate` mid-run (or between runs without unfreezing the task)
-- Compute its own metric and report it as the primary metric
-- Access the test set directly — the split is performed inside `load_data`
-- Re-train evaluation code in the same `run_experiment_code` call
+- Modify `load_data.py` or `evaluate.py` in a way that affects recorded metrics. Workspace edits to the modules are shadowed by canonical at import time.
+- Pass a metric dict to the framework. There is no `complete_experiment(metrics=...)` exposed to the agent — `evaluate_experiment` is the only path metrics enter the system.
+- Skip `load_data`. If the agent's train.py recomputes the split inline, its `y_pred` is ordered against a different test set than the canonical `evaluate` will compare against, so the metric will be obviously bad — self-correcting.
+- Register new tools at runtime. The agent's MCP surface is fixed at run-start.
 
 ### Enforcement points
 
-1. **Tool registration:** `collect_all_tools(lab, domain)` only includes the Task's frozen tools (plus the platform tools `create_experiment`, `complete_experiment`, `run_experiment_code`, `write_knowledge`, etc.). The agent gets exactly that set.
-2. **System prompt:** the prompt explicitly tells the agent which surface it owns, and that the metric reported by `evaluate` is what counts.
-3. **Tool immutability:** tools are loaded from the Task at run-start; the agent cannot register new tools at runtime.
-4. **Metric source:** `complete_experiment` records the metric dict that came out of the `evaluate` tool, not anything else the agent might have computed.
+1. **Canonical tool path.** `freeze` copies `<workspace>/load_data.py` and `<workspace>/evaluate.py` to `.dojo/domains/{id}/tools/`. SHA-256 hashes recorded on `task.config["tool_hashes"]`. `assert_ready` verifies hashes match before allowing a run — defence-in-depth against tampering with `.dojo/`.
+2. **`PYTHONPATH` ordering.** Every sandbox subprocess sets `PYTHONPATH = <canonical>:<workspace>`. `from evaluate import evaluate` always resolves canonical first.
+3. **Framework-only call site.** `evaluate` is only ever called from inside the `evaluate_experiment` MCP handler, in a subprocess the framework controls. The agent has no MCP tool for `evaluate`.
+4. **Restricted MCP surface.** `collect_all_tools(lab, domain)` returns only platform tools — `create_experiment`, `run_experiment_code`, `evaluate_experiment`, `fail_experiment`, `get_experiment`, `list_experiments`, `compare_experiments`, `log_metrics`, `log_params`, `write_knowledge`, `search_knowledge`, `list_knowledge`. No per-domain tool registration.
+5. **`predictions.json` is the only hand-off.** The agent's train.py communicates with the framework solely by writing this file. No stdout markers, no env var protocols, no shared state.
 
 ### Soft enforcement (good-faith, not airtight)
 
-The `Bash` and `Write` Claude builtins are still allowed for productivity — the agent can read files, do quick checks, etc. A truly adversarial agent could in principle bypass `evaluate` by reading data directly and computing its own score. We accept this for now because:
+The `Bash`, `Read`, and `Write` Claude built-in tools are still allowed for productivity — the agent can read files, install packages, do quick checks. A truly adversarial agent could in principle bypass the contract by:
+- writing a fake `predictions.json` directly without training a model (yields whatever metric that fake represents — auditable in `_dojo_train_<N>.py` artifact);
+- spawning a subprocess that ignores the canonical `PYTHONPATH` and uses its own evaluator (would still need to write `predictions.json`, and the recorded metric still comes from canonical evaluate).
+
+We accept these because:
 
 - Our agents are not adversarial; they're constrained-but-cooperative LLM agents.
-- The structural separation (`evaluate` is frozen, `complete_experiment` records what `evaluate` returns) means even an agent computing a side metric still has to declare a metric *via the official channel* — and that's the one we trust.
-- Hard enforcement (sandboxed file ACLs, network isolation) belongs in the sandboxed cloud execution layer, which is the **closed** part of the open-core split.
+- The structural separation (`evaluate` is framework-called, `predictions.json` is the only hand-off, canonical `PYTHONPATH` shadows the workspace) means the recorded metric is always `canonical_evaluate(predictions.json)`. The agent cannot directly write to that variable.
+- Every saved train script is auditable. A reviewer reading `.dojo/artifacts/experiments/{id}/_dojo_train_*.py` can spot fake-predictions cheating immediately.
+- Hard enforcement (sandboxed file ACLs, network isolation, signed artifacts) belongs in the sandboxed cloud execution layer, which is the **closed** part of the open-core split.
 
 So: **structural anti-cheating now, hardened anti-cheating in the closed cloud layer later.**
 
@@ -280,45 +326,57 @@ The magic of Dojo is that a user describes their data and evaluation in natural 
 
 ```
 1. User creates Domain + Task (type=REGRESSION, points at workspace)
-   └── User answers a small structured prompt: data file? target column? test split? extra context?
+   └── User edits PROGRAM.md to describe the dataset, target, and success criteria
 
-2. Framework calls AI tool generation
-   └── For each ToolContract in TASK_TYPE_REGISTRY[REGRESSION].required_tools:
-         build a prompt that includes:
-           - the task type spec (return schema, param schema)
-           - the user's natural-language context
-           - the workspace tree summary (already built by WorkspaceScanner)
-         call the LLM, parse the returned tool code
+2. Framework calls AI tool generation (`dojo task generate`)
+   └── Build a single prompt that includes:
+         - the registry's regression generation_prompt_template
+         - PROGRAM.md content (the user's natural-language spec, source of truth)
+         - any structured hints the user passed (data_path, target_column — optional)
+         - the workspace tree summary (built by WorkspaceScanner)
+   └── Call the LLM with `--model claude-sonnet-4-6`
+   └── Parse output: a JSON array of `{name, filename, entrypoint, code}` per tool
 
-3. Framework verifies each generated tool        ←—— NEW: this step is missing today
-   └── Run the tool in the sandbox with sample inputs
-   └── Confirm output shape matches ToolContract
-   └── Record verification result on the tool
+3. Framework writes generated modules to the workspace
+   └── <workspace>/load_data.py
+   └── <workspace>/evaluate.py
+   └── User can read these in their editor before approving
 
-4. User reviews the generated tools (UI later; CLI / API for now)
-   └── Reads the code, the example output, the verification result
-   └── Approves all → POST /domains/{id}/task/freeze
+4. Framework verifies each generated module
+   └── For each ToolContract: importlib-import the module, call entrypoint with synthetic inputs
+   └── For regression: load_data() returns 4-tuple → use y_test as y_pred fixture for evaluate()
+   └── Validate function returns against ToolContract.returns_schema
+   └── Record VerificationResult on the DomainTool
 
-5. Task is now frozen — agent runs are unblocked
+5. User reviews and approves
+   └── Reads <workspace>/load_data.py, <workspace>/evaluate.py
+   └── Sees verification status from `dojo task show` (✓ / ✗ per tool)
+   └── Approves → `dojo task freeze`
+
+6. `freeze` makes it canonical
+   └── Copies <workspace>/load_data.py to .dojo/domains/{id}/tools/load_data.py
+   └── Copies <workspace>/evaluate.py to .dojo/domains/{id}/tools/evaluate.py
+   └── Records SHA-256 hashes on Task.config["tool_hashes"]
+   └── Sets task.frozen = True
+
+7. Task is now frozen — agent runs are unblocked
 ```
 
-### Verification step (new)
+### Verification step
 
-Currently AI-generated tools are returned as suggestions and registered manually with no automated check ([api/routers/domains.py:485-533](src/dojo/api/routers/domains.py#L485-L533)). We need a verifier:
+The verifier ([`runtime/tool_verifier.py`](src/dojo/runtime/tool_verifier.py)) imports the generated module via `importlib` (in a subprocess for isolation, so verifier failures don't pollute the dojo process). It:
 
-- Build sample inputs from `ToolContract.params_schema`
-- Execute the tool in `LocalSandbox` against the workspace
-- Parse stdout as JSON, validate against `ToolContract.returns_schema`
-- Record `{"verified": True/False, "errors": [...], "sample_output": {...}}` on the tool
-- Block freezing the task if any required tool failed verification
+- Imports the module from its file path.
+- Looks up the function named by `ToolContract.entrypoint`.
+- Calls it with fixtures derived from `ToolContract.params_schema`. For regression's `evaluate`, the fixture for `y_pred` is `y_test` from a successful `load_data()` call (perfect predictions; should yield rmse≈0, r2≈1).
+- Validates the return value against `ToolContract.returns_schema`.
+- Records `{"verified": True/False, "errors": [...], "sample_output": {...}}` on the `DomainTool`.
 
-This is the difference between "vibe-checked AI output" and "the framework knows the tools work."
+`TaskService.freeze` rejects when any required tool's verification is missing or failed.
 
-### Cleanup: Claude CLI vs Anthropic API
+### Cleanup: Claude CLI auth
 
-Today, runs go through the local `claude` CLI subprocess (no API key needed) but tool generation in [`api/routers/domains.py:500`](src/dojo/api/routers/domains.py#L500) calls `backend.complete()` which falls into [`agents/backends/claude.py:117-130`](src/dojo/agents/backends/claude.py#L117-L130) — a separate `anthropic.AsyncAnthropic()` client requiring `ANTHROPIC_API_KEY`. Two auth paths is confusing.
-
-**Resolution:** route `backend.complete()` through the same `ClaudeSDKClient` mechanism as runs (one-shot configure → execute with no tools, capture the text). One auth path.
+Both `dojo run` (agent runs) and `dojo task generate` (one-shot tool generation) use `backend.complete()` which shells out to `claude -p --model <id> <prompt>`. Same auth path as agent runs — no `ANTHROPIC_API_KEY` needed, the `claude` CLI inherits the user's local Claude Code login. The default model for tool generation is configurable via `agent.tool_generation_model` (defaults to `claude-sonnet-4-6`).
 
 ---
 
@@ -362,19 +420,22 @@ The ports & adapters layout stays. The new pieces fit cleanly into existing laye
 
 | Layer | Component | Change |
 |---|---|---|
-| `core/` | `Task`, `TaskType`, `Direction`, `ToolContract`, `TaskTypeSpec`, `TASK_TYPE_REGISTRY` | NEW — single file `core/task.py` |
-| `core/` | `Domain` | Modified — `tools` field removed; `task: Task | None` added |
-| `core/` | `DomainTool` | Stays as-is (now lives on Task instead of Domain) |
-| `runtime/` | `TaskService` | NEW — task creation, tool generation orchestration, freezing |
-| `runtime/` | `ToolVerifier` | NEW — sandbox-runs each tool and validates against ToolContract |
-| `runtime/` | `DomainService` | Modified — no longer manages tools directly |
-| `tools/` | `tool_generation.py` | Modified — registry-aware prompt building, returns ToolContract-shaped tools |
-| `tools/` | `domain_tools.py` | Renamed to `task_tools.py`; loads tools from `domain.task.tools` instead of `domain.tools` |
-| `agents/` | `prompts.py` | Modified — frame the contract clearly: agent owns training code, evaluate is the source of truth |
-| `agents/` | `orchestrator.py` | Modified — block run start if `domain.task is None` or `domain.task.frozen is False` |
-| `api/` | `routers/domains.py` | Modified — task and tool endpoints move under `/domains/{id}/task/...`; tool generation produces verified-but-unfrozen tools |
-| `api/` | `routers/agent.py` | Modified — explicit error if domain has no frozen task |
-| `storage/` | `local/domain.py` | Modified — Domain JSON serialisation includes nested Task |
+| `core/` | `Task`, `TaskType`, `Direction`, `ToolContract`, `TaskTypeSpec`, `TASK_TYPE_REGISTRY` | DONE — `core/task.py`. Phase 4 expands `ToolContract` with `module_filename` + `entrypoint`. |
+| `core/` | `Domain` | DONE — `task: Task | None` added; `program_path: str | None` added. Phase 4 drops `Domain.tools` field once frontend response migrated. |
+| `core/` | `DomainTool` | Phase 4 adds `module_filename: str` and `entrypoint: str`. Drops `executable: bool` and `parameters: dict` (stdout-JSON-era fields). |
+| `runtime/` | `TaskService` | DONE — Phase 4 adds canonical-path copy in `freeze` (copy `<workspace>/<filename>` to `.dojo/domains/{id}/tools/<filename>` + SHA-256 hash). |
+| `runtime/` | `ToolVerifier` | Phase 4 rewrites — drops script execution, uses `importlib` in a subprocess to import + call the module's function. |
+| `runtime/` | `DomainService` | DONE — no longer manages tools directly. |
+| `runtime/` | `program_loader.py` | DONE — PROGRAM.md resolution + load + write. |
+| `tools/` | `tool_generation.py` | Phase 4 updates output format: AI emits `{name, filename, entrypoint, code}` per tool; `dicts_to_domain_tools` populates the new `DomainTool` fields. |
+| `tools/` | `domain_tools.py` | Phase 4 removes — tools are no longer agent-callable as MCP tools. |
+| `tools/` | `experiments.py` | Phase 4 adds `evaluate_experiment` MCP tool (the only path metrics enter the system). `run_experiment_code` stops extracting metrics — just runs train.py and returns `{stdout, stderr, exit_code}`. `complete_experiment` becomes internal. |
+| `tools/` | `server.py` `collect_all_tools` | Phase 4 drops the per-domain `create_domain_tools(...)` call — agent's MCP surface is platform tools only. |
+| `agents/` | `prompts.py` | DONE (3b) and Phase 4 rewrites `_build_task_section` around the four-tool-call sequence. Drops references to agent calling `evaluate` or `complete_experiment`. |
+| `agents/` | `orchestrator.py` | DONE — blocks run start if `domain.task is None`, `frozen is False`, or any required tool unverified. |
+| `api/` | `routers/domains.py` | DONE — tool generation produces verified-but-unfrozen tools; freeze gate enforces verification. |
+| `api/` | `routers/agent.py` | DONE — explicit 422 with `{kind: "task_not_ready"}` if domain has no frozen task. |
+| `storage/` | `local/domain.py` | DONE — Domain JSON serialisation includes nested Task with verification round-trip. |
 
 ### What stays the same
 
@@ -388,36 +449,49 @@ The mental model for what a Dojo session looks like.
 
 ```
 1. Human creates a Domain
-   ├── Names it, writes a steering prompt ("Predict California housing prices...")
-   └── Configures workspace (local repo / git url) → WorkspaceService.setup()
+   ├── `dojo init --name <X> --task-type regression`
+   ├── Names it, configures workspace (local / git / empty) → WorkspaceService.setup()
+   └── Framework scaffolds <workspace>/PROGRAM.md from a template
 
-2. Human creates the Task on that Domain
-   ├── Picks RegressionTask
-   ├── Provides data path, target column, test split (Task.config)
-   └── Optionally: extra natural-language context for tool generation
+2. Human edits PROGRAM.md
+   ├── Describes the dataset (sklearn loader / local CSV / URL — natural language)
+   ├── Describes the target and what success looks like
+   └── This is the source of truth for tool generation
 
-3. Framework generates tools (AI-assisted)
-   ├── For each required_tool in TASK_TYPE_REGISTRY[REGRESSION]:
-   │     LLM produces tool code → ToolVerifier runs in sandbox → records result
-   ├── Human reviews generated tools (code + sample output + verification status)
-   └── Human approves → Task.frozen = True
+3. Framework generates tools (`dojo task setup` = generate + verify + freeze)
+   ├── AI reads PROGRAM.md, emits load_data.py + evaluate.py to <workspace>/
+   ├── ToolVerifier importlib-imports each module, calls the entrypoint, validates returns
+   ├── Human reviews <workspace>/load_data.py and <workspace>/evaluate.py in their editor
+   └── `dojo task freeze` copies modules to .dojo/domains/{id}/tools/, hashes them,
+                          sets task.frozen = True
 
-4. Human starts an agent run
+4. Human starts an agent run (`dojo run`)
    ├── Domain has a frozen task — orchestrator allows the run
-   ├── System prompt frames the contract: agent owns training code, frozen tools own data + eval
+   ├── System prompt frames the contract: agent owns train.py, framework owns load_data + evaluate
    └── Agent enters research loop:
 
    5. Agent plans an experiment
       ├── Searches accumulated knowledge for the domain
       ├── Forms a hypothesis ("baseline linear regression")
-      └── create_experiment(domain_id, hypothesis) → state RUNNING
+      └── create_experiment(domain_id, hypothesis) → returns experiment_id, state RUNNING
 
-   6. Agent executes
-      ├── run_experiment_code(experiment_id, code=...)
-      │     The code calls load_data(), trains, calls evaluate(y_pred)
-      │     evaluate() returns {"rmse": 4.2, "r2": 0.87, "mae": 3.1}
-      ├── log_metrics(experiment_id, those metrics)
-      └── complete_experiment(experiment_id, metrics)
+   6. Agent executes (4 MCP calls per experiment)
+      ├── run_experiment_code(experiment_id, train_code)
+      │     train_code is a normal Python script:
+      │       from load_data import load_data
+      │       X_train, X_test, y_train, y_test = load_data()
+      │       model = LinearRegression().fit(X_train, y_train)
+      │       y_pred = model.predict(X_test).tolist()
+      │       json.dump(y_pred, open("predictions.json", "w"))
+      │     Framework saves it as _dojo_train_<N>.py, runs it, returns stdout/stderr.
+      │     PYTHONPATH = canonical_tools_dir : workspace, so `from load_data import ...`
+      │     resolves the canonical version (workspace overwrites are shadowed).
+      ├── evaluate_experiment(experiment_id)
+      │     Framework reads <workspace>/predictions.json, imports canonical evaluate,
+      │     calls evaluate(y_pred), gets {"rmse": 0.72, "r2": 0.61, "mae": 0.53},
+      │     records on experiment.result.metrics, transitions to COMPLETED.
+      │     Returns the metric dict to the agent.
+      └── (optional) log_metrics for hyperparameters / aux measurements
 
    7. Agent records knowledge
       └── write_knowledge(context, claim, action, confidence, evidence_ids=[experiment_id])
@@ -427,10 +501,11 @@ The mental model for what a Dojo session looks like.
       └── Stops when max_turns reached, max_budget_usd reached, or human stops
 
 9. Human reviews
-   ├── Metric evolution chart over experiments in the domain
+   ├── `dojo runs show <id>` for events, metrics, cost
+   ├── Metric evolution across experiments in the domain (frontend or HTTP)
    ├── Knowledge atoms — what was learned
-   ├── Iterates on the steering prompt
-   └── Starts another run, possibly with the prompt updated
+   ├── Iterates on PROGRAM.md
+   └── Starts another run; the new PROGRAM.md takes effect at run start
 ```
 
 ---
@@ -465,11 +540,12 @@ The detailed sequenced punch-list lives in [NEXT_STEPS.md](NEXT_STEPS.md). High 
 
 | Phase | Theme | Outcome |
 |---|---|---|
-| **0** ✅ | Cleanup *(done)* | Stale docs / legacy code gone; one Claude auth path; broken legacy `dojo run` reclaimed; lint clean |
-| **1** ✅ | Task abstraction + disk-as-source-of-truth *(done)* | `core/task.py` exists; `Domain` holds a `Task` and a `program_path`; storage round-trips; `RunStore` interface + `LocalRunStore` adapter persist runs to `.dojo/runs/`; orchestrator writes through on every status change and every 10 events; agent router reads through on cache miss |
-| **2** | CLI happy path + PROGRAM.md | `dojo init` / `dojo run` flow works in-process; current-domain state file; PROGRAM.md convention; `dojo task` / `dojo runs` / `dojo program` subcommands |
-| **3** | Tool verification + anti-cheating gating | `ToolVerifier` runs every generated tool in sandbox; freeze gate enforces verification; orchestrator blocks unfrozen / unverified runs; system prompt rewritten around the contract |
-| **4** | First real RegressionTask end-to-end via CLI | California housing dataset running cleanly via `dojo init && dojo run` alone; cheating + replay + knowledge accumulation tests pass |
+| **0** ✅ | Cleanup | Stale docs / legacy code gone; one Claude auth path; broken legacy `dojo run` reclaimed; lint clean |
+| **1** ✅ | Task abstraction + disk-as-source-of-truth | `core/task.py` exists; `Domain` holds a `Task` and a `program_path`; storage round-trips; `RunStore` + `LocalRunStore` persist runs; orchestrator writes through on every status change and every 10 events; agent router reads through on cache miss |
+| **2** ✅ | CLI happy path + PROGRAM.md | `dojo init` / `dojo run` flow works in-process; current-domain state file; PROGRAM.md convention; `dojo task` / `dojo runs` / `dojo program` subcommands |
+| **3** ✅ | Tool verification + anti-cheating gating (stdout-JSON contract) | `ToolVerifier` runs each generated tool in sandbox; freeze gate enforces verification; orchestrator blocks unfrozen / unverified runs; system prompt frames the contract. *Some mechanics superseded by Phase 4.* |
+| **3.5** ✅ | Natural-language happy path (PROGRAM.md as spec) | `dojo init` doesn't demand structured fields; PROGRAM.md is threaded into the generation prompt; `dojo task setup` is a single command |
+| **4** | Function-based contract + framework-owned evaluation | Tools become Python modules with named functions; `dojo task freeze` copies them to canonical `.dojo/domains/{id}/tools/`; new `evaluate_experiment` MCP tool is the only path metrics enter the system; agent's MCP surface restricted to platform tools; California housing E2E green |
 | **5** | Reconnaissance for what's next | Knowledge linker upgrade decision; wall-clock budget decision; first external user |
 
 Frontend work resumes only after Phase 4 — once the backend contract is solid and the CLI proves the loop, the UI changes are mechanical.
@@ -483,14 +559,16 @@ Because this is the design north star, mapping it out keeps decisions consistent
 | Karpathy autoresearch | Dojo equivalent |
 |---|---|
 | One repo per problem | One Domain |
-| `prepare.py` (frozen) — data prep, dataloader, evaluation | `Task.tools` — `load_data` + `evaluate`, frozen at task-freeze time |
-| `train.py` (agent edits) | Code passed to `run_experiment_code` per experiment |
+| `prepare.py` (frozen) — data prep, dataloader, evaluation | Two frozen Python modules at canonical path: `load_data.py` (function `load_data() -> tuple`) and `evaluate.py` (function `evaluate(y_pred) -> dict`). Imports resolve via `PYTHONPATH` rooted at `.dojo/domains/{id}/tools/`. |
+| `from prepare import make_dataloader, evaluate_bpb` in `train.py` | `from load_data import load_data` in agent's `_dojo_train_<N>.py`. The framework calls `evaluate` itself — agent never imports it. |
+| `train.py` (agent edits) | Code passed to `run_experiment_code` per experiment. Saved as `.dojo/artifacts/experiments/{id}/_dojo_train_<N>.py`. Runs as a normal Python script, no wrapping. |
 | `program.md` (human edits) | `PROGRAM.md` file at `<workspace>/PROGRAM.md` (or domain-local fallback), loaded into `Domain.prompt` at run start |
 | Fixed 5-min wall-clock budget | `max_turns` / `max_budget_usd` / future wall-clock budget on agent run |
 | `val_bpb` metric, lower is better | `Task.primary_metric` + `Task.direction` (per `TaskTypeSpec`) |
 | Single GPU, single host | Single-tenant, local sandbox |
-| Agent edits one file (`train.py`) | Agent calls one mutable tool (`run_experiment_code`) |
-| Human iterates on `program.md` between sessions | Human iterates on `Domain.prompt` between sessions |
+| Agent edits one file (`train.py`) | Agent calls one mutable tool (`run_experiment_code`); the script it submits is a normal `train.py` |
+| Human iterates on `program.md` between sessions | Human iterates on `PROGRAM.md` between sessions |
+| Result: a single metric printed by the script | Result: `evaluate_experiment` reads `predictions.json`, calls canonical `evaluate`, records the metric — agent never handles the metric directly |
 
 A "Karpathy mode" Dojo Domain — once we add `GenerativeTask` later — is just `Domain(workspace=local repo) + Task(type=GENERATIVE, primary_metric="val_bpb", direction=MINIMIZE)`. Same shape, different Task type.
 
@@ -523,6 +601,11 @@ Pinning the calls so they don't get re-litigated. If you disagree with one of th
 | 7 | Frontend de-prioritized | Solidify the core contract first; UI is mechanical once the backend is right | 2026-05-03 |
 | 8 | CLI is the canonical surface; HTTP and frontend are peers | A user must be able to do everything from the terminal alone, in-process, without a running server. Frontend/SaaS sit on top of the same runtime layer the CLI uses. | 2026-05-03 |
 | 9 | `PROGRAM.md` is the editable steering prompt | Karpathy-style. Lives in the workspace by default. File content wins over `Domain.prompt` at run start so editing between runs takes effect without DB writes. | 2026-05-03 |
+| 10 | Tools are Python modules with named functions, not stdout-JSON scripts | The agent imports them as normal Python; the framework calls them via `importlib`. Drops literal-injection wrapping and stdout markers. Aligns with Karpathy's `from prepare import ...` pattern. | 2026-05-03 |
+| 11 | Frozen tools live at `.dojo/domains/{id}/tools/`; sandbox `PYTHONPATH` puts canonical first | Workspace edits to `evaluate.py` are shadowed at import time. SHA-256 hashes recorded on freeze for tamper detection. | 2026-05-03 |
+| 12 | Framework owns the experiment loop end-to-end via `evaluate_experiment` | Agent's contribution is `predictions.json`. Framework calls `evaluate(y_pred)` itself; the recorded metric is the canonical evaluator's return. Removes the agent's ability to pass a metric dict to the system. | 2026-05-03 |
+| 13 | Four-tool-call experiment loop | `create_experiment` → `run_experiment_code` → `evaluate_experiment` → `write_knowledge`. No `complete_experiment(metrics=...)` exposed to the agent — the state transition is internal to `evaluate_experiment`. | 2026-05-03 |
+| 14 | `predictions.json` (workspace-relative) is the only train→framework hand-off | One convention, no env var protocols, no shared state, no stdout markers, no auto-prologue/epilogue wrapping. The agent's train.py runs the same way `python train.py` would on the user's terminal. | 2026-05-03 |
 
 ---
 

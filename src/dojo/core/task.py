@@ -83,7 +83,8 @@ You are generating Python tool code for a regression ML task.
 Domain: {domain_name}
 {domain_description}
 
-Task configuration:
+{program_md_section}
+## Structured hints (optional — PROGRAM.md wins if they conflict)
   data_path: {data_path}
   target_column: {target_column}
   test_split_ratio: {test_split_ratio}
@@ -91,19 +92,32 @@ Task configuration:
 
 {hint_section}
 
-Generate exactly two tools as a JSON array.
+## How to read this
+- The PROGRAM.md block above is the user's spec — it tells you where the data
+  lives and what the target is, in plain English. Trust it.
+- For sklearn-bundled datasets (e.g. fetch_california_housing, load_diabetes),
+  the user typically points you at the loader function — there is NO csv path
+  and NO column name. Use the loader directly:
+    from sklearn.datasets import fetch_california_housing
+    X, y = fetch_california_housing(return_X_y=True)
+- For local CSVs, use the data_path / target_column hints if PROGRAM.md
+  doesn't give you better info.
+- For URLs, download via pandas/requests (the workspace has internet).
+
+## Output: exactly two tools as a JSON array
 
 Tool 1 — load_data
 - No parameters
-- Loads the dataset from data_path, splits into train/test using test_split_ratio
-- Returns JSON with keys: X_train (list), X_test (list), y_train (list), y_test (list)
-- Each value is a list of lists (for X) or a flat list (for y)
-- Prints the JSON to stdout; no return statement needed
-- Do NOT print anything else to stdout
+- Loads the dataset, splits into train/test using test_split_ratio
+- Use a deterministic split (random_state=42) so evaluate sees the same y_test
+- Returns JSON with keys: X_train (list of lists), X_test (list of lists),
+  y_train (flat list of floats), y_test (flat list of floats)
+- Prints the JSON to stdout; do NOT print anything else
 
 Tool 2 — evaluate
 - Receives y_pred injected as a local variable (a flat list of floats)
-- Loads y_test from the same split as load_data (use the same random_state)
+- Reproduces the same split as load_data (same loader, same random_state)
+  to get y_test
 - Computes: rmse (float), r2 (float), mae (float)
 - Returns JSON with exactly those three keys
 - Prints the JSON to stdout; do NOT print anything else
@@ -112,7 +126,7 @@ Output format (respond with ONLY this JSON, no markdown):
 [
   {{
     "name": "load_data",
-    "description": "Load and split {target_column} dataset",
+    "description": "Load and split the dataset described in PROGRAM.md",
     "type": "data_loader",
     "example_usage": "# Call load_data() to get X_train, X_test, y_train, y_test",
     "parameters": {{}},

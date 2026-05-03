@@ -28,6 +28,7 @@ class Sandbox(ABC):
         python_path: str | None = None,
         env_vars: dict[str, str] | None = None,
         timeout: float | None = None,
+        name: str | None = None,
     ) -> ExecutionResult:
         """Execute code in the sandbox.
 
@@ -38,6 +39,9 @@ class Sandbox(ABC):
             python_path: Path to Python executable (uses system default if None).
             env_vars: Additional environment variables.
             timeout: Override sandbox default timeout.
+            name: Optional human-readable name for the script file (e.g.
+                ``"load_data"``). When set, the file is written as
+                ``{name}.py`` so the user can inspect it. Sanitised for safety.
 
         Returns:
             The execution result.

@@ -35,12 +35,14 @@ def cli_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
 
 @pytest.fixture
 def initialized_dir(cli_dir: Path) -> Path:
-    """An isolated dir that has gone through `dojo init` non-interactively."""
+    """An isolated dir that has gone through `dojo init` non-interactively.
+
+    Phase 3.5: no `--data-path` / `--target-column` — the user is expected to
+    describe the dataset in PROGRAM.md, then run `dojo task setup`.
+    """
     runner = CliRunner()
     workspace = cli_dir / "ws"
     workspace.mkdir()
-    data = cli_dir / "housing.csv"
-    data.write_text("a,b,target\n1,2,3\n")
 
     result = runner.invoke(
         app,
@@ -54,14 +56,7 @@ def initialized_dir(cli_dir: Path) -> Path:
             str(workspace),
             "--task-type",
             "regression",
-            "--data-path",
-            str(data),
-            "--target-column",
-            "target",
-            "--test-split",
-            "0.2",
             "--no-setup",
-            "--no-generate-tools",
             "--non-interactive",
         ],
     )
@@ -72,12 +67,51 @@ def initialized_dir(cli_dir: Path) -> Path:
 def test_init_non_interactive_creates_domain_task_program(initialized_dir: Path):
     state = (initialized_dir / ".dojo" / "state.yaml").read_text()
     assert "current_domain_id:" in state
-    # PROGRAM.md was scaffolded next to the workspace
+    # PROGRAM.md was scaffolded next to the workspace with the new structure
     program = list(initialized_dir.glob("ws/PROGRAM.md"))
     assert len(program) == 1
     body = program[0].read_text()
     assert "housing" in body
     assert "regression" in body
+    # New template carries the natural-language sections
+    assert "## Dataset" in body
+    assert "## Target" in body
+    assert "## Success" in body
+
+
+def test_init_works_without_data_path_or_target_column(cli_dir: Path):
+    """Phase 3.5: regression init is happy without dataset flags."""
+    runner = CliRunner()
+    workspace = cli_dir / "ws"
+    workspace.mkdir()
+
+    result = runner.invoke(
+        app,
+        [
+            "init",
+            "--name",
+            "housing",
+            "--workspace",
+            str(workspace),
+            "--task-type",
+            "regression",
+            "--no-setup",
+            "--non-interactive",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    # task.config should not contain data_path / target_column
+    domain_files = list((cli_dir / ".dojo" / "domains").glob("*.json"))
+    assert len(domain_files) == 1
+    import json
+
+    data = json.loads(domain_files[0].read_text())
+    assert data["task"] is not None
+    cfg = data["task"]["config"]
+    assert "data_path" not in cfg
+    assert "target_column" not in cfg
+    assert cfg["test_split_ratio"] == 0.2
+    assert cfg["expected_metrics"] == ["rmse", "r2", "mae"]
 
 
 def test_init_fails_when_required_field_missing_and_non_interactive(cli_dir: Path):
@@ -90,7 +124,6 @@ def test_init_fails_when_required_field_missing_and_non_interactive(cli_dir: Pat
             "regression",
             "--non-interactive",
             "--no-setup",
-            "--no-generate-tools",
         ],
     )
     # Missing --name should exit with EXIT_USER_ERROR
@@ -213,8 +246,6 @@ def test_domain_use_switches_pointer(initialized_dir: Path):
     # Create a second domain via the CLI
     workspace = initialized_dir / "ws2"
     workspace.mkdir()
-    data = initialized_dir / "data2.csv"
-    data.write_text("a,target\n1,2\n")
     create = runner.invoke(
         app,
         [
@@ -225,12 +256,7 @@ def test_domain_use_switches_pointer(initialized_dir: Path):
             str(workspace),
             "--task-type",
             "regression",
-            "--data-path",
-            str(data),
-            "--target-column",
-            "target",
             "--no-setup",
-            "--no-generate-tools",
             "--non-interactive",
         ],
     )

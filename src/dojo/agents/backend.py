@@ -87,3 +87,12 @@ class AgentBackend(ABC):
     def name(self) -> str:
         """Human-readable backend name (e.g. 'claude', 'copilot')."""
         return self.__class__.__name__
+
+    @property
+    def model(self) -> str | None:
+        """Model id used by ``complete()``, when known. None means default.
+
+        Surfaced so the CLI can show "asking claude (sonnet-4-6) ..." in the
+        spinner. Backends that don't pin a model just return None.
+        """
+        return None

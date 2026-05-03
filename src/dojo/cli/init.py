@@ -3,12 +3,15 @@
 Interactive by default; every prompt has a flag for non-interactive use.
 Steps:
   1. Bootstrap config (.dojo/config.yaml)
-  2. Create the Domain + workspace (reuses domain.create logic)
-  3. Scaffold PROGRAM.md
-  4. Create the Task (regression-only today)
-  5. Generate tools (verification deferred to Phase 3)
-  6. Set current_domain_id
-  7. Print next steps
+  2. Create the Domain + workspace
+  3. Create the Task (regression-only today)
+  4. Scaffold PROGRAM.md (the user's spec)
+  5. Set current_domain_id
+  6. Print next steps
+
+Tool generation is intentionally NOT part of init — the user edits PROGRAM.md
+to describe the dataset/goal in natural language, then runs `dojo task setup`
+to generate and verify tools against that description.
 """
 
 from __future__ import annotations
@@ -32,18 +35,11 @@ from dojo.core.domain import (
 from dojo.core.task import TaskType
 from dojo.runtime.program_loader import default_program_template, write_program
 from dojo.runtime.task_service import TaskService
-from dojo.runtime.tool_verifier import verify_required_tools
 from dojo.runtime.workspace_service import WorkspaceService
-from dojo.tools.tool_generation import (
-    build_task_generation_prompt,
-    dicts_to_domain_tools,
-    parse_generated_tools,
-)
 
 console = Console()
 
 EXIT_USER_ERROR = 1
-EXIT_SYSTEM_ERROR = 2
 
 
 def init(
@@ -53,9 +49,15 @@ def init(
         ".", "--workspace", help="Local workspace path (or 'empty' for a fresh dir)"
     ),
     task_type: str = typer.Option("regression", "--task-type", help="Task type"),
-    data_path: str | None = typer.Option(None, "--data-path", help="Path to dataset"),
+    data_path: str | None = typer.Option(
+        None,
+        "--data-path",
+        help="Optional dataset path hint (the AI prefers PROGRAM.md if not given)",
+    ),
     target_column: str | None = typer.Option(
-        None, "--target-column", help="Target column for regression"
+        None,
+        "--target-column",
+        help="Optional target column name (only relevant for tabular CSV datasets)",
     ),
     test_split: float = typer.Option(0.2, "--test-split", help="Test split ratio for regression"),
     tracking: str | None = typer.Option(
@@ -67,9 +69,6 @@ def init(
     skip_setup: bool = typer.Option(
         False, "--no-setup", help="Skip workspace setup (no venv install)"
     ),
-    skip_generate: bool = typer.Option(
-        False, "--no-generate-tools", help="Skip AI tool generation"
-    ),
     non_interactive: bool = typer.Option(
         False, "--non-interactive", help="Fail (don't prompt) if any value is missing"
     ),
@@ -77,7 +76,7 @@ def init(
         Path(".dojo"), "--config-dir", help="Dojo state directory"
     ),
 ) -> None:
-    """Interactive setup wizard for a new domain."""
+    """Set up a new domain. Edit PROGRAM.md after, then `dojo task setup`."""
     asyncio.run(
         _init_async(
             name=name,
@@ -90,7 +89,6 @@ def init(
             tracking=tracking,
             agent_backend=agent_backend,
             skip_setup=skip_setup,
-            skip_generate=skip_generate,
             non_interactive=non_interactive,
             config_dir=config_dir,
         )
@@ -123,7 +121,6 @@ async def _init_async(
     tracking: str | None,
     agent_backend: str | None,
     skip_setup: bool,
-    skip_generate: bool,
     non_interactive: bool,
     config_dir: Path,
 ) -> None:
@@ -131,10 +128,8 @@ async def _init_async(
     config_dir.mkdir(parents=True, exist_ok=True)
     config_path = config_dir / "config.yaml"
     if not config_path.exists():
-        # Reuse the existing CLI helper — writes the default YAML.
         config_init()
 
-    # Honor optional flags by patching after default write
     if tracking or agent_backend:
         _patch_config(config_path, tracking=tracking, agent_backend=agent_backend)
 
@@ -176,7 +171,7 @@ async def _init_async(
                 f"Continuing — fix manually or rerun `POST /domains/{domain.id}/workspace/setup`"
             )
 
-    # ---- 3. Task creation (must precede PROGRAM.md so template knows the type)
+    # ---- 3. Task creation ---------------------------------------------------
     try:
         ttype = TaskType(task_type_str)
     except ValueError as e:
@@ -185,27 +180,9 @@ async def _init_async(
         )
         raise typer.Exit(code=EXIT_USER_ERROR) from e
 
-    if ttype == TaskType.REGRESSION:
-        if data_path is None:
-            data_path = _ask(
-                "Path to the dataset (CSV)",
-                default=None,
-                non_interactive=non_interactive,
-            )
-        if target_column is None:
-            target_column = _ask(
-                "Target column name",
-                default=None,
-                non_interactive=non_interactive,
-            )
-
-    task_config: dict = {}
-    if ttype == TaskType.REGRESSION:
-        task_config = {
-            "data_path": str(Path(data_path).expanduser()) if data_path else "",
-            "target_column": target_column or "",
-            "test_split_ratio": test_split,
-        }
+    task_config = _build_task_config(
+        ttype, data_path=data_path, target_column=target_column, test_split=test_split
+    )
 
     task_svc = TaskService(lab)
     task = await task_svc.create(
@@ -217,7 +194,7 @@ async def _init_async(
     domain = await lab.domain_store.load(domain.id)
     assert domain is not None  # just saved
 
-    # ---- 4. PROGRAM.md scaffold (after task so the template knows the type) -
+    # ---- 4. PROGRAM.md scaffold ---------------------------------------------
     program_path = write_program(
         domain,
         default_program_template(domain),
@@ -227,28 +204,45 @@ async def _init_async(
     await lab.domain_store.save(domain)
     console.print(f"[green]✓[/green] PROGRAM.md scaffolded at {program_path}")
 
-    # ---- 5. Tool generation (Phase 2: no verification) ----------------------
-    if not skip_generate:
-        await _generate_tools(lab, domain, settings)
-    else:
-        console.print("[yellow]skipped[/yellow] tool generation (--no-generate-tools)")
-
-    # ---- 6. Set current_domain_id -------------------------------------------
+    # ---- 5. Set current_domain_id -------------------------------------------
     set_current_domain_id(Path(settings.storage.base_dir), domain.id)
 
-    # ---- 7. Next steps -------------------------------------------------------
+    # ---- 6. Next steps -------------------------------------------------------
     console.print()
     console.print("[bold green]ready[/bold green] — next steps:")
-    console.print(f"  1. edit [cyan]{program_path}[/cyan] to steer the agent")
     console.print(
-        "  2. run `[bold]dojo task setup --unsafe-skip-verify[/bold]` "
-        "to (re)generate + freeze tools"
+        f"  1. edit [cyan]{program_path}[/cyan] — describe the dataset, target, "
+        "and what success looks like"
     )
-    console.print("  3. run `[bold]dojo run[/bold]` to start the agent")
     console.print(
-        "\n[dim]Note:[/dim] tool [bold]verification[/bold] is Phase 3. Today "
-        "freezing requires `--unsafe-skip-verify`."
+        "  2. run [bold]dojo task setup[/bold] — generates `load_data` + "
+        "`evaluate` from your PROGRAM.md, verifies them, and freezes the task"
     )
+    console.print("  3. run [bold]dojo run[/bold] — start the agent")
+
+
+def _build_task_config(
+    ttype: TaskType,
+    *,
+    data_path: str | None,
+    target_column: str | None,
+    test_split: float,
+) -> dict:
+    """Translate optional CLI hints into the task.config dict.
+
+    For regression, every field is optional — when missing, the AI generator
+    falls back to whatever the user wrote in PROGRAM.md (e.g. a sklearn loader,
+    a URL, a description in plain English).
+    """
+    if ttype != TaskType.REGRESSION:
+        return {}
+
+    cfg: dict = {"test_split_ratio": test_split}
+    if data_path:
+        cfg["data_path"] = str(Path(data_path).expanduser())
+    if target_column:
+        cfg["target_column"] = target_column
+    return cfg
 
 
 def _build_workspace(arg: str) -> Workspace | None:
@@ -260,54 +254,6 @@ def _build_workspace(arg: str) -> Workspace | None:
         console.print(f"[red]error:[/red] workspace path does not exist: {path}")
         raise typer.Exit(code=EXIT_USER_ERROR)
     return Workspace(source=WorkspaceSource.LOCAL, path=str(path))
-
-
-async def _generate_tools(lab, domain: Domain, settings) -> None:
-    """Generate tools using the configured agent backend; verify and persist."""
-    from dojo.agents.factory import create_agent_backend
-
-    if domain.task is None:
-        return
-
-    prompt = build_task_generation_prompt(domain, domain.task, hint="")
-    backend = create_agent_backend(settings.agent.backend)
-
-    try:
-        raw = await backend.complete(prompt)
-    except (AttributeError, NotImplementedError):
-        console.print(
-            f"[yellow]skip:[/yellow] backend {settings.agent.backend} "
-            "doesn't support tool generation; you can do it later "
-            "with `dojo task generate`."
-        )
-        return
-    except Exception as e:
-        console.print(f"[yellow]warning:[/yellow] tool generation failed: {e}")
-        return
-
-    try:
-        tool_dicts = parse_generated_tools(raw)
-    except ValueError as e:
-        console.print(
-            f"[yellow]warning:[/yellow] could not parse tool output: {e}\n"
-            "[dim]Run `dojo task generate` to retry.[/dim]"
-        )
-        return
-
-    tools = dicts_to_domain_tools(tool_dicts)
-
-    console.print("verifying tools against contract...")
-    await verify_required_tools(tools, domain.task, sandbox=lab.sandbox, workspace=domain.workspace)
-
-    domain.task.tools = tools
-    domain.tools = list(tools)
-    await lab.domain_store.save(domain)
-
-    pass_count = sum(1 for t in tools if t.verification and t.verification.verified)
-    console.print(
-        f"[green]✓[/green] generated {len(tools)} tools "
-        f"({pass_count} verified, {len(tools) - pass_count} unverified)"
-    )
 
 
 def _patch_config(config_path: Path, *, tracking: str | None, agent_backend: str | None) -> None:
