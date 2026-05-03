@@ -32,19 +32,27 @@ def render_runner(
     train_module: str,
     canonical_dir: str,
     workspace_dir: str,
+    train_dir: str | None = None,
 ) -> str:
     """Render the runner script as a module string.
 
-    Canonical comes first on ``sys.path`` so ``from evaluate import evaluate``
-    always resolves to the frozen tool, regardless of whatever the agent has
-    written to the workspace. The workspace follows so the train module
-    (``__dojo_train_<n>.py``) is importable.
+    sys.path priority (last-inserted wins):
+      1. ``train_dir`` — where the per-experiment ``__dojo_train.py`` lives
+         (under .dojo/domains/{id}/runs/{eid}/), if provided.
+      2. ``canonical_dir`` — frozen ``load_data`` / ``evaluate`` tools.
+      3. ``workspace_dir`` — the user's repo, for their own imports.
+
+    Canonical-before-workspace ensures the frozen tools resolve correctly even
+    if the user's repo also has files named ``load_data.py`` / ``evaluate.py``.
     """
+    extra_paths = ""
+    if train_dir is not None:
+        extra_paths = f"sys.path.insert(0, {train_dir!r})\n"
     return f"""\
 import json, sys, traceback
 sys.path.insert(0, {workspace_dir!r})
 sys.path.insert(0, {canonical_dir!r})
-
+{extra_paths}
 try:
     from {train_module} import train
     from evaluate import evaluate

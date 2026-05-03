@@ -29,6 +29,7 @@ class Sandbox(ABC):
         env_vars: dict[str, str] | None = None,
         timeout: float | None = None,
         name: str | None = None,
+        script_dir: str | None = None,
     ) -> ExecutionResult:
         """Execute code in the sandbox.
 
@@ -41,7 +42,10 @@ class Sandbox(ABC):
             timeout: Override sandbox default timeout.
             name: Optional human-readable name for the script file (e.g.
                 ``"load_data"``). When set, the file is written as
-                ``{name}.py`` so the user can inspect it. Sanitised for safety.
+                ``{name}.py``. Sanitised for safety.
+            script_dir: Where to write the runner stub. Defaults to ``cwd``.
+                Use this to keep the runner out of the user's workspace
+                while still running with ``cwd=<workspace>``.
 
         Returns:
             The execution result.

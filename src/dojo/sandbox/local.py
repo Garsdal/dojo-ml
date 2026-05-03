@@ -41,16 +41,27 @@ class LocalSandbox(Sandbox):
         env_vars: dict[str, str] | None = None,
         timeout: float | None = None,
         name: str | None = None,
+        script_dir: str | None = None,
     ) -> ExecutionResult:
-        """Execute code in a subprocess, optionally in a workspace context."""
+        """Execute code in a subprocess, optionally in a workspace context.
+
+        ``script_dir`` controls where the runner script is written. Defaults
+        to ``cwd`` (or a fresh tempdir if cwd is also None). Setting
+        ``script_dir`` separately lets callers run with cwd=<user's workspace>
+        while keeping the dojo runner stub out of that workspace — used by
+        ``run_experiment`` to drop the runner under ``.dojo/domains/{id}/runs/``.
+        """
         if language != "python":
             return ExecutionResult(stderr=f"Unsupported language: {language}", exit_code=1)
 
         effective_timeout = timeout if timeout is not None else self.timeout
         effective_python = python_path or "python"
         work_dir = cwd or tempfile.mkdtemp()
+        # Where the runner stub lands. Separated from cwd so we can write
+        # under .dojo/ while running with cwd=workspace for relative imports.
+        effective_script_dir = script_dir or work_dir
 
-        script_path = Path(work_dir) / _safe_script_filename(name, code)
+        script_path = Path(effective_script_dir) / _safe_script_filename(name, code)
         script_path.write_text(code)
 
         env = {**os.environ, **(env_vars or {})}
@@ -82,10 +93,10 @@ class LocalSandbox(Sandbox):
                 duration_ms=duration_ms,
             )
         finally:
-            # Clean up the temp script file (artifacts are stored separately)
-            if not cwd:
-                # Only auto-cleanup temp scripts in temp dirs
-                script_path.unlink(missing_ok=True)
+            # Always clean up the runner stub we wrote — leaving it behind
+            # was the root cause of `__dojo_runner.py` / `verify_<tool>.py`
+            # leaking into the user's workspace.
+            script_path.unlink(missing_ok=True)
 
     async def install_packages(self, packages: list[str]) -> ExecutionResult:
         """Install packages using pip."""

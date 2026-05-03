@@ -75,6 +75,29 @@ so experiments and knowledge are linked to this domain.
 5. After 2+ experiments, ``compare_experiments`` to assess progress.
 6. Iterate. Change one thing at a time between experiments.
 
+## Don't waste turns on exploration
+You have a strict per-run turn budget. Spending the first 5-10 turns reading
+the workspace before running anything is the single most common way to burn
+through it. Defaults that keep you efficient:
+
+- **Don't read ``load_data.py`` or ``evaluate.py``.** They are frozen black
+  boxes from your perspective. Their behaviour is fully described by the
+  task contract above and steered by the `## Dataset` / `## Evaluate` sections
+  of PROGRAM.md. Just call them in your ``train()``.
+- **Trust PROGRAM.md.** It is the user's spec. If it names a model class
+  (e.g. "use ``PriceModel`` from ``mypkg.models``"), import it directly and
+  run a baseline experiment as your first turn. Don't hunt around the
+  workspace to verify the spec — broken imports surface as a failed
+  ``run_experiment`` call, which is cheap.
+- **Tools like Bash / Glob / Read are last resorts**, not first moves. Reach
+  for them only after a ``run_experiment`` call has surfaced a concrete
+  question (e.g. "this import path is wrong, where does this symbol live?").
+  Reading prior knowledge or experiment metrics is fine; reading source code
+  speculatively is not.
+- **Your first ``run_experiment`` should fire within the first 1-2 turns.**
+  A baseline that fails is more valuable than a perfect mental model that
+  hasn't been tested.
+
 ## Example train_code
 
 ```python

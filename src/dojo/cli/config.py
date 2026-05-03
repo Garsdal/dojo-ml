@@ -31,7 +31,11 @@ llm:
   model: "stub"
 
 sandbox:
-  timeout: 30.0
+  # Per-experiment wall-clock cap for `run_experiment` subprocesses.
+  timeout: 300.0
+  # One-off cap for `dojo task setup` verification — set high because the
+  # first call to `load_data` may have to fetch + cache real datasets.
+  verification_timeout: 600.0
 
 storage:
   base_dir: ".dojo"

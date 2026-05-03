@@ -222,6 +222,16 @@ class TaskService:
         """
         return self._domain_dir(domain_id) / "sources"
 
+    def runs_dir(self, domain_id: str, experiment_id: str) -> Path:
+        """Return ``<storage_base>/domains/{id}/runs/{experiment_id}`` —
+        per-experiment scratch dir for agent-generated train code and the
+        runner stub, so they don't pollute the user's workspace.
+
+        The artifact archive at ``experiments/{id}/__dojo_train_{id}.py``
+        remains the canonical, durable copy.
+        """
+        return self._domain_dir(domain_id) / "runs" / experiment_id
+
     def _domain_dir(self, domain_id: str) -> Path:
         base = (
             Path(self.lab.settings.storage.base_dir)

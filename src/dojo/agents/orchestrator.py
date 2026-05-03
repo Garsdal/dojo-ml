@@ -172,9 +172,18 @@ class AgentOrchestrator:
                     result = _result_from_event(event)
                     run.result = result
                     if run.status == RunStatus.RUNNING:
-                        run.status = (
-                            RunStatus.FAILED if event.data.get("is_error") else RunStatus.COMPLETED
-                        )
+                        # If a stop was requested, the SDK may emit a final
+                        # result with is_error=True (the interrupt looks like
+                        # an error to it). Treat that as STOPPED, not FAILED —
+                        # mirrors the error-event branch below.
+                        if self._stop_requested:
+                            run.status = RunStatus.STOPPED
+                        else:
+                            run.status = (
+                                RunStatus.FAILED
+                                if event.data.get("is_error")
+                                else RunStatus.COMPLETED
+                            )
                     await self.lab.run_store.save(run)
                     _event_count = 0
 

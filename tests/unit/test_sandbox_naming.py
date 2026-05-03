@@ -27,21 +27,57 @@ def test_safe_filename_handles_empty_name():
 
 
 async def test_local_sandbox_writes_named_script(tmp_path: Path):
+    """The sandbox writes a script whose filename is derived from `name`,
+    runs it, then cleans it up — the file should NOT linger after execution
+    (lingering scripts polluted the user's workspace)."""
     sandbox = LocalSandbox()
-    code = "print('hi')"
+    code = "import os; print(os.path.basename(__file__))"
     result = await sandbox.execute(
         code,
         cwd=str(tmp_path),
         name="load_data",
     )
     assert result.exit_code == 0
-    assert (tmp_path / "load_data.py").exists()
-    assert (tmp_path / "load_data.py").read_text() == code
+    # Script ran with the expected filename
+    assert result.stdout.strip() == "load_data.py"
+    # And was cleaned up afterwards
+    assert not (tmp_path / "load_data.py").exists()
 
 
 async def test_local_sandbox_falls_back_to_anon_name(tmp_path: Path):
+    """Without `name`, the sandbox uses an anonymous _dojo_<id>.py filename
+    and still cleans it up after execution."""
     sandbox = LocalSandbox()
-    result = await sandbox.execute("print('x')", cwd=str(tmp_path))
+    result = await sandbox.execute(
+        "import os; print(os.path.basename(__file__))",
+        cwd=str(tmp_path),
+    )
     assert result.exit_code == 0
-    matches = list(tmp_path.glob("_dojo_*.py"))
-    assert len(matches) == 1
+    name = result.stdout.strip()
+    assert name.startswith("_dojo_")
+    assert name.endswith(".py")
+    assert list(tmp_path.glob("_dojo_*.py")) == []
+
+
+async def test_local_sandbox_script_dir_separates_runner_from_cwd(tmp_path: Path):
+    """`script_dir` lets the runner stub land outside cwd — used by
+    `run_experiment` so the dojo runner stays in `.dojo/...` while the
+    subprocess runs from the user's workspace."""
+    cwd_dir = tmp_path / "workspace"
+    cwd_dir.mkdir()
+    script_dir = tmp_path / "scratch"
+    script_dir.mkdir()
+
+    sandbox = LocalSandbox()
+    result = await sandbox.execute(
+        "import os; print(os.path.dirname(os.path.abspath(__file__)))",
+        cwd=str(cwd_dir),
+        script_dir=str(script_dir),
+        name="runner",
+    )
+    assert result.exit_code == 0
+    # The script ran from script_dir, not cwd
+    assert result.stdout.strip() == str(script_dir)
+    # Both dirs ended up clean
+    assert list(cwd_dir.iterdir()) == []
+    assert list(script_dir.iterdir()) == []

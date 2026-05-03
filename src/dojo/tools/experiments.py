@@ -82,34 +82,38 @@ def create_experiment_tools(lab: LabEnvironment) -> list[ToolDef]:
         if experiment.result is None:
             experiment.result = ExperimentResult()
 
-        # 2. Lay out files. The workspace copy is named after the experiment
-        #    id so successive runs don't overwrite each other — the user (or
-        #    a future debugging session) can `cat __dojo_train_<id>.py` to
-        #    inspect exactly what produced a given metric. The artifact under
-        #    `experiments/<id>/` remains the canonical archive.
+        # 2. Lay out files. Train code + runner stub live under
+        #    `.dojo/domains/{id}/runs/{eid}/` so the user's repo stays clean.
+        #    The artifact under `experiments/<id>/` remains the canonical
+        #    archive — that's the place to inspect exactly what produced a
+        #    given metric (e.g. via `dojo` CLI / artifact APIs).
         run_number = 1
-        train_module = f"__dojo_train_{experiment_id}"
+        train_module = "__dojo_train"
         train_filename = f"{train_module}.py"
+        artifact_filename = f"__dojo_train_{experiment_id}.py"
 
         workspace_path = Path(domain.workspace.path)
         canonical_dir = task_service.canonical_tools_dir(domain_id)
+        runs_dir = task_service.runs_dir(domain_id, experiment_id)
+        runs_dir.mkdir(parents=True, exist_ok=True)
 
         # 2a. Persist train code as an artifact (provenance).
-        artifact_path = f"experiments/{experiment_id}/{train_filename}"
+        artifact_path = f"experiments/{experiment_id}/{artifact_filename}"
         await lab.artifact_store.save(artifact_path, train_code.encode())
 
-        # 2b. Write train code + runner into the workspace so the subprocess
-        #     can import them. The runner overwrites each run; we don't try
-        #     to clean up — the agent might want to inspect them.
-        (workspace_path / train_filename).write_text(train_code)
+        # 2b. Write train + runner into the per-experiment runs dir.
+        (runs_dir / train_filename).write_text(train_code)
         runner_code = render_runner(
             train_module=train_module,
             canonical_dir=str(canonical_dir),
             workspace_dir=str(workspace_path),
+            train_dir=str(runs_dir),
         )
 
-        # 3. Execute. LocalSandbox writes runner_code as `<workspace>/__dojo_runner.py`
-        #    and runs `python __dojo_runner.py` from the workspace.
+        # 3. Execute the runner from the runs dir (so its script lands there,
+        #    not in the user's workspace). cwd stays the workspace so the
+        #    agent's train code can do relative imports / file paths against
+        #    the user's repo unchanged.
         ws = domain.workspace
         exec_result = await lab.sandbox.execute(
             runner_code,
@@ -117,6 +121,7 @@ def create_experiment_tools(lab: LabEnvironment) -> list[ToolDef]:
             python_path=ws.python_path,
             env_vars=ws.env_vars or None,
             name="__dojo_runner",
+            script_dir=str(runs_dir),
         )
 
         # 4. Record the CodeRun before deciding success/failure so the artifact
