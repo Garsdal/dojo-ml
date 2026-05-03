@@ -115,19 +115,26 @@ class ClaudeAgentBackend(AgentBackend):
             await self._client.interrupt()
 
     async def complete(self, prompt: str) -> str:
-        """Simple one-shot completion using the Anthropic API."""
-        try:
-            import anthropic
-        except ImportError as e:
-            raise NotImplementedError("anthropic package required for completions") from e
+        """One-shot completion via the claude CLI subprocess.
 
-        client = anthropic.AsyncAnthropic()
-        response = await client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=4096,
-            messages=[{"role": "user", "content": prompt}],
+        Uses the same auth path as agent runs — no ANTHROPIC_API_KEY needed.
+        The -p / --print flag runs claude non-interactively and prints the response.
+        """
+        import asyncio
+
+        proc = await asyncio.create_subprocess_exec(
+            "claude",
+            "-p",
+            prompt,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
         )
-        return response.content[0].text
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120.0)
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"claude -p failed (exit {proc.returncode}): {stderr.decode().strip()}"
+            )
+        return stdout.decode().strip()
 
     @property
     def name(self) -> str:

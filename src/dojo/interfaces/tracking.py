@@ -49,6 +49,5 @@ class TrackingConnector(ABC):
         """
         ...
 
-    async def close(self) -> None:
+    async def close(self) -> None:  # noqa: B027
         """Clean up resources. Default no-op."""
-        pass

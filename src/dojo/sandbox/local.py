@@ -48,9 +48,7 @@ class LocalSandbox(Sandbox):
                 cwd=work_dir,
                 env=env,
             )
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(), timeout=effective_timeout
-            )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=effective_timeout)
             duration_ms = (time.monotonic() - start) * 1000
 
             return ExecutionResult(

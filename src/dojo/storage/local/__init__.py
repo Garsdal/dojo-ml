@@ -5,6 +5,7 @@ from .domain import LocalDomainStore
 from .experiment import LocalExperimentStore
 from .knowledge_link import LocalKnowledgeLinkStore
 from .memory import LocalMemoryStore
+from .run import LocalRunStore
 
 __all__ = [
     "LocalArtifactStore",
@@ -12,4 +13,5 @@ __all__ = [
     "LocalExperimentStore",
     "LocalKnowledgeLinkStore",
     "LocalMemoryStore",
+    "LocalRunStore",
 ]

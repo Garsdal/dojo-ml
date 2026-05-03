@@ -28,7 +28,7 @@ def create(
     ),
     git_url: str = typer.Option(None, "--git-url", help="Git URL (for --workspace git)"),
     no_setup: bool = typer.Option(False, "--no-setup", help="Skip workspace setup"),
-    config_dir: Path = typer.Option(
+    config_dir: Path = typer.Option(  # noqa: B008
         Path(".dojo"), "--config-dir", help="Dojo.ml config directory"
     ),
 ) -> None:
@@ -58,8 +58,8 @@ async def _create_domain(
     no_setup: bool,
     config_dir: Path,
 ) -> None:
-    from dojo.storage.local.domain import LocalDomainStore
     from dojo.runtime.workspace_service import WorkspaceService
+    from dojo.storage.local.domain import LocalDomainStore
 
     # Interactive prompts for missing values
     if name is None:
@@ -145,22 +145,28 @@ async def _create_domain(
             )
 
     # Optionally run setup
-    if workspace.source != WorkspaceSource.EMPTY and not no_setup:
-        if workspace.path and Path(workspace.path).exists():
-            run_setup = typer.confirm("\nSet up workspace now? (creates venv, installs deps)", default=True)
-            if run_setup:
-                typer.echo("Setting up workspace...")
-                ws_service = WorkspaceService(config_dir)
-                try:
-                    updated_ws = await ws_service.setup(domain)
-                    domain.workspace = updated_ws
-                    await domain_store.save(domain)
-                    typer.echo(f"✓ Workspace ready: {updated_ws.path}")
-                    if updated_ws.python_path:
-                        typer.echo(f"  Python: {updated_ws.python_path}")
-                except Exception as e:
-                    typer.echo(f"  Warning: setup failed: {e}", err=True)
-                    typer.echo("  You can retry later via: POST /domains/{domain.id}/workspace/setup")
+    if (
+        workspace.source != WorkspaceSource.EMPTY
+        and not no_setup
+        and workspace.path
+        and Path(workspace.path).exists()
+    ):
+        run_setup = typer.confirm(
+            "\nSet up workspace now? (creates venv, installs deps)", default=True
+        )
+        if run_setup:
+            typer.echo("Setting up workspace...")
+            ws_service = WorkspaceService(config_dir)
+            try:
+                updated_ws = await ws_service.setup(domain)
+                domain.workspace = updated_ws
+                await domain_store.save(domain)
+                typer.echo(f"✓ Workspace ready: {updated_ws.path}")
+                if updated_ws.python_path:
+                    typer.echo(f"  Python: {updated_ws.python_path}")
+            except Exception as e:
+                typer.echo(f"  Warning: setup failed: {e}", err=True)
+                typer.echo("  You can retry later via: POST /domains/{domain.id}/workspace/setup")
 
 
 @app.command()

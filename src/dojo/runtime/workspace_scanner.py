@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import ast
-import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 
 @dataclass
@@ -30,7 +29,7 @@ class WorkspaceScanner:
     - Evaluation functions (score*, evaluate*, metric*) → evaluator tools
     """
 
-    DATA_EXTENSIONS = {".csv", ".parquet", ".json", ".jsonl", ".tsv"}
+    DATA_EXTENSIONS: ClassVar[set[str]] = {".csv", ".parquet", ".json", ".jsonl", ".tsv"}
     MAX_DATA_FILES = 10
     MAX_MODULES = 5
 
@@ -70,12 +69,14 @@ class WorkspaceScanner:
         files: list[Path] = []
 
         for f in root.rglob("*"):
-            if f.is_file() and f.suffix in self.DATA_EXTENSIONS:
-                # Skip files in excluded directories
-                if not any(p.name in exclude_dirs for p in f.parents):
-                    files.append(f)
-                    if len(files) >= self.MAX_DATA_FILES:
-                        break
+            if (
+                f.is_file()
+                and f.suffix in self.DATA_EXTENSIONS
+                and not any(p.name in exclude_dirs for p in f.parents)
+            ):
+                files.append(f)
+                if len(files) >= self.MAX_DATA_FILES:
+                    break
 
         return files
 
@@ -91,7 +92,7 @@ class WorkspaceScanner:
                 modules.append(module_path)
             except ValueError:
                 pass
-        return modules[:self.MAX_MODULES]
+        return modules[: self.MAX_MODULES]
 
     def _find_python_functions(self, root: Path) -> list[dict[str, Any]]:
         """Find public functions in Python modules."""
@@ -139,9 +140,7 @@ class WorkspaceScanner:
                 )
         return functions
 
-    def _suggest_data_loaders(
-        self, data_files: list[Path], root: Path
-    ) -> list[ToolSuggestion]:
+    def _suggest_data_loaders(self, data_files: list[Path], root: Path) -> list[ToolSuggestion]:
         """Generate data loader tool suggestions for CSV/parquet files."""
         suggestions = []
         for f in data_files:
@@ -173,9 +172,7 @@ class WorkspaceScanner:
 
         return suggestions
 
-    def _suggest_from_functions(
-        self, functions: list[dict[str, Any]]
-    ) -> list[ToolSuggestion]:
+    def _suggest_from_functions(self, functions: list[dict[str, Any]]) -> list[ToolSuggestion]:
         """Generate tool suggestions from Python functions."""
         suggestions = []
         eval_keywords = {"score", "evaluate", "metric", "accuracy", "loss", "rmse", "mae"}
@@ -190,7 +187,6 @@ class WorkspaceScanner:
             is_evaluator = any(kw in name.lower() for kw in eval_keywords)
             tool_type = "evaluator" if is_evaluator else "custom"
 
-            param_str = ", ".join(f"{p}=None" for p in params)
             call_str = f"{name}({', '.join(params)})" if params else f"{name}()"
 
             code = (
@@ -209,8 +205,7 @@ class WorkspaceScanner:
                     code=code,
                     example_usage=example,
                     parameters={
-                        p: {"type": "string", "description": f"Parameter: {p}"}
-                        for p in params
+                        p: {"type": "string", "description": f"Parameter: {p}"} for p in params
                     },
                 )
             )

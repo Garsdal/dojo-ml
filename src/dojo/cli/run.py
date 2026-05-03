@@ -1,4 +1,8 @@
-"""CLI run command — submit a task and display results."""
+"""CLI run command — start an agent run on the current domain (in-process, no server needed).
+
+This replaces the old HTTP-based task submission. Phase 2 of NEXT_STEPS.md fills
+this out fully; for now it is a placeholder that explains the gap clearly.
+"""
 
 import typer
 from rich.console import Console
@@ -7,47 +11,17 @@ console = Console()
 
 
 def run(
-    prompt: str = typer.Argument(help="The task prompt to run"),
-    host: str = typer.Option("127.0.0.1", help="Server host"),
-    port: int = typer.Option(8000, help="Server port"),
+    max_turns: int = typer.Option(50, help="Maximum agent turns"),
+    max_budget_usd: float | None = typer.Option(None, help="Max spend cap in USD"),
 ) -> None:
-    """Submit a task to the Dojo.ml server and display the result."""
-    import httpx
+    """Start an agent run on the current domain (in-process).
 
-    base_url = f"http://{host}:{port}"
-
-    console.print(f"\n  [bold]Submitting task:[/bold] {prompt}\n")
-
-    try:
-        with httpx.Client(base_url=base_url, timeout=60.0) as client:
-            resp = client.post("/tasks", json={"prompt": prompt})
-            resp.raise_for_status()
-            data = resp.json()
-
-            console.print(f"  [green]✓[/green] Task ID: {data['id']}")
-            console.print(f"  [green]✓[/green] Status:  {data['status']}")
-
-            if data.get("summary"):
-                console.print(f"  [green]✓[/green] Summary: {data['summary']}")
-
-            if data.get("metrics"):
-                console.print("  [bold]Metrics:[/bold]")
-                for key, val in data["metrics"].items():
-                    console.print(f"    {key}: {val}")
-
-            if data.get("experiments"):
-                console.print(f"  [bold]Experiments:[/bold] {len(data['experiments'])}")
-                for exp in data["experiments"]:
-                    console.print(f"    - {exp['id']} [{exp['state']}]")
-
-            console.print()
-
-    except httpx.ConnectError:
-        console.print(
-            f"  [red]✗[/red] Could not connect to server at {base_url}\n"
-            "    Run [bold]dojo start[/bold] first."
-        )
-        raise typer.Exit(code=1)
-    except httpx.HTTPStatusError as e:
-        console.print(f"  [red]✗[/red] Server error: {e.response.status_code}")
-        raise typer.Exit(code=1)
+    Requires: a domain with a frozen Task. Set up one with `dojo init`.
+    """
+    console.print(
+        "\n  [yellow]⚠[/yellow]  `dojo run` is being rebuilt as a first-class CLI command.\n"
+        "  This will run the agent in-process without needing `dojo start`.\n\n"
+        "  Until Phase 2 of NEXT_STEPS.md lands, start an agent run via:\n"
+        "    [bold]dojo start[/bold]  (then use the frontend or POST /agent/run)\n"
+    )
+    raise typer.Exit(code=1)

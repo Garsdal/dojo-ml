@@ -1,671 +1,537 @@
-# MASTER_PLAN.md — Dojo Vision & Architecture
+# MASTER_PLAN.md — Dojo.ml Vision & Architecture
 
-> **Dojo** — An AI-powered autonomous ML research platform where agents recursively explore domains, run experiments, and build a compressed, evolving knowledge base.
+> **Dojo.ml** — An autonomous ML research framework. Define a research domain with a frozen data + evaluation contract, and an agent runs experiments against it overnight, accumulating compressed knowledge of what actually works.
 
 ---
 
 ## 1. Vision
 
-Dojo is a **prompt-to-results ML research engine**. A human defines a research *domain* — a broad area of inquiry with goals, data, and tools — and AI agents autonomously plan, execute, and learn from thousands of experiments within that domain.
+### What we're building
 
-The system operates on three levels of hierarchy:
+Dojo runs **controlled, reproducible ML experiments on your existing pipelines and builds a memory of what actually works.** A human defines a *domain* — a research area pointing at real data with a fixed evaluation contract — and an autonomous agent iterates on training code inside that contract, learning across many experiments.
+
+The structural insight: the framework, not the agent, owns evaluation. Agents are creative but unreliable; their reports of their own performance are not. So we draw a hard line:
+
+```
+prepare.py        → load_data tool + evaluate tool          (frozen — framework + human + AI at setup)
+train.py          → run_experiment_code per experiment      (mutable — agent edits)
+program.md        → Domain.prompt (steering prompt)         (human edits between runs)
+```
+
+This is the [Karpathy autoresearch](https://github.com/karpathy/autoresearch) split — `prepare.py` is fixed, `train.py` is fair game, `program.md` is what the human iterates on. We're generalising that pattern beyond LLM training so it works for any well-defined ML problem class — starting with regression.
+
+### Why a framework, not a script
+
+Anyone can wire Claude up to a Jupyter notebook for an evening. What we're building has to:
+
+1. **Make cheating structurally impossible.** Agent metrics must be trustworthy without auditing every code block.
+2. **Compose across runs.** Knowledge from past experiments shapes future ones, on the same problem and across problems.
+3. **Stay reproducible.** Every experiment is a tracked, replayable artifact: code, config, data version, metric.
+4. **Be portable.** Point at any local repo or git URL via the `Workspace` abstraction; don't make users rewrite their pipeline to use Dojo.
+
+### Three-level hierarchy
 
 ```
 Domain (human-defined)
-  └── Experiments (agent-created, many thousands per domain)
-        └── Knowledge Atoms (produced by experiments, linked across experiments & domains)
+  ├── Workspace                   — pre-configured execution env (local repo / git url / empty)
+  ├── Task (typed, currently only RegressionTask)
+  │     ├── load_data tool        — frozen at task-freeze time
+  │     └── evaluate tool         — frozen at task-freeze time
+  └── Experiments                 — agent-created, many per domain
+        └── Knowledge atoms       — produced, linked across experiments via KnowledgeLinker
 ```
 
-**Humans set up domains** (with AI assistance for tool creation). **Agents operate at the experiment level** — planning hypotheses, writing code, executing in sandboxes, recording results, and compressing findings into reusable knowledge. The knowledge base evolves over time, with atoms linked across experiments and domains through a dynamic compression process.
+The Task pins the contract; the agent operates inside it. Knowledge is the framework's long-term output.
 
 ---
 
-## 2. Core Concepts
+## 2. Positioning & strategic stance
 
-### 2.1 Domains (replacing Tasks)
+This stance is **load-bearing** for everything that follows. Read before proposing new features.
 
-A **Domain** is the top-level organizational unit. It replaces the current `Task` abstraction with a richer, more persistent concept.
+### Open-core, already open
 
-| Field | Type | Description |
+Dojo is open source. This repo is the **execution layer** and stays open. The hard parts that we'll close once they exist:
+
+| Layer | Status | Plan |
 |---|---|---|
-| `id` | `str` (ULID) | Unique identifier |
-| `name` | `str` | Human-readable domain name |
-| `description` | `str` | What this research domain is about |
-| `prompt` | `str` | Domain-specific steering prompt used to guide all agent research under this domain |
+| Domain abstraction, experiment loop, knowledge atoms, agent orchestration core | Open (this repo) | Stays open |
+| Local adapters (storage, sandbox, compute, MLflow tracker) | Open (this repo) | Stays open |
+| Sandboxed cloud execution (Modal-style) | Not built | Closed when built |
+| Hosted memory layer (managed knowledge atom store, cross-domain retrieval) | Not built | Closed when built |
+| Agent reliability layer (retries, guardrails, eval correctness, anti-cheating enforcement) | Partially built (anti-cheating) | The product/managed pieces stay closed |
+
+### Single-tenant, local-first
+
+There is one user, one machine, one `.dojo/` directory of JSON state. That's the assumption baked into the storage adapters and it's a feature, not a limitation:
+
+- No multi-tenant MLflow operations problem
+- No tenant isolation testing matrix
+- No compliance surface area
+- Data stays on the user's machine
+
+The first time we genuinely need multi-tenancy (e.g., a hosted offering after enough validation), we add a Postgres adapter behind the existing `ExperimentStore` / `DomainStore` interfaces. Until then, **don't add tenant ids, RBAC, or SaaS-shaped APIs**.
+
+### Bring your own Python pipeline
+
+The integration surface is the [`Workspace`](src/dojo/core/domain.py) abstraction. Point Dojo at:
+
+- A local path on disk, OR
+- A git URL (cloned to `.dojo/workspaces/{domain_id}`), OR
+- An empty dir Dojo creates fresh
+
+Workspace setup auto-detects `pyproject.toml` (uses `uv sync`), `requirements.txt` (creates venv + pip install), or an existing `.venv`. The agent's `cwd` and `python_path` are pinned to the workspace at run-start. **Do not** build parallel adapters for Kubeflow, Airflow, Prefect, etc. — make the workspace abstraction work harder.
+
+### MLflow as a bridge, not a platform
+
+`MlflowTracker` sits **on top of** whatever MLflow the user already has. We never own or operate MLflow infrastructure. Single-user-per-MLflow-instance keeps it simple. If a user prefers no tracking, `FileTracker` writes JSON to `.dojo/tracking/`.
+
+### CLI-first; HTTP and frontend are peers
+
+The canonical surface is the terminal. A user gets from "empty directory" to "agent running" with two commands:
+
+```bash
+dojo init     # interactive (or fully flag-driven): config + workspace + task + AI tool gen + verify + freeze
+dojo run      # agent runs against the current domain; events stream to terminal
+```
+
+In between, the human edits `PROGRAM.md` — Karpathy-style: a Markdown file containing the steering prompt. Iteration on `PROGRAM.md` between runs is the primary dial the user has.
+
+CLI commands call `LabEnvironment` services directly (the same ones the FastAPI routers call) — no HTTP round-trip from the CLI. A running **Dojo** server is required *only* for the web frontend or external HTTP clients, never for the CLI itself. This means:
+
+- The framework is fully usable in CI, scripts, headless boxes, and SSH sessions.
+- The frontend (and any future SaaS) is built **on top of** the same runtime layer the CLI uses, not the other way round.
+- No path is privileged — a feature must work via the CLI before we expose it to the API or UI.
+
+**External infrastructure the user still provides** (none of which is "the Dojo server"):
+
+| Dependency | When | Notes |
+|---|---|---|
+| `claude` CLI | Always (for non-stub agent runs) | Installed once by the user; inherits their auth. `ClaudeSDKClient` shells out to it. |
+| MLflow tracking server | Only if `tracking.backend = mlflow` | The user's MLflow, never ours. `tracking.backend = file` removes this dependency. |
+| `uv` / `python -m venv` | Once per workspace | Used by `WorkspaceService.setup()` to install the workspace's deps. |
+
+**Honest practical caveats** of the in-process model:
+
+- `dojo run` blocks the terminal until the run finishes. For long runs, fall back to standard Unix tooling (`nohup`, `tmux`) — we deliberately don't build a Dojo daemon.
+- Persisted state (`.dojo/`) is the single source of truth. Any second process — another CLI invocation, the optional HTTP server, a `dojo runs show` from a different terminal — must read run state from disk, not from in-memory caches. This is a hard rule (see §8 cleanup notes and Phase 1 of [NEXT_STEPS.md](NEXT_STEPS.md)).
+- Concurrent writes to `.dojo/` JSON files are not protected by file locks. Single-user, one-active-run-per-machine is fine; many-concurrent-agents-per-machine is out of scope until we have a shared backend.
+
+### Out of scope (for now)
+
+These are not "bad ideas" — they are deliberately not on the roadmap until prior steps validate the framework:
+
+- Multi-tenancy / SaaS hosting
+- Cloud sandbox / Modal / Supabase / hosted compute
+- Enterprise integrations beyond MLflow (Kubeflow, Airflow, Slack, JIRA, etc.)
+- Multiple task types beyond `RegressionTask` (classification, forecasting, generative)
+- Multiple Tasks per Domain
+- Frontend feature work beyond keeping the existing pages alive
+
+---
+
+## 3. Core abstractions
+
+### 3.1 Domain
+
+A research area, human-defined. Holds the steering prompt, accumulated knowledge, exactly one Task, and one Workspace.
+
+| Field | Type | Notes |
+|---|---|---|
+| `id` | `str` (ULID) | |
+| `name`, `description`, `prompt` | `str` | Steering prompt is the equivalent of `program.md` — human iterates on it |
 | `status` | `DomainStatus` | `DRAFT → ACTIVE → PAUSED → COMPLETED → ARCHIVED` |
-| `tools` | `list[DomainTool]` | Domain-specific tools (data loaders, evaluation code, etc.) |
-| `config` | `dict` | Domain-level configuration overrides (e.g., model constraints, resource limits) |
-| `metadata` | `dict` | Extensible metadata (dataset info, success criteria, etc.) |
-| `experiment_ids` | `list[str]` | Linked experiments |
-| `created_at` | `datetime` | Creation timestamp |
-| `updated_at` | `datetime` | Last update timestamp |
+| `task` | `Task | None` | Exactly one (None during DRAFT before task is created) |
+| `workspace` | `Workspace | None` | The execution env |
+| `experiment_ids` | `list[str]` | Denormalized for fast queries |
+| `metadata`, `config` | `dict` | Extensible |
+| `created_at`, `updated_at` | `datetime` | |
 
-#### Domain-Specific Tools
+**Change from current code:** the `tools: list[DomainTool]` field on `Domain` moves onto `Task.tools`. A Domain itself holds no tools — only its Task does.
 
-Domains carry their own tooling — data loaders, evaluation harnesses, preprocessing scripts, etc. These are structured definitions the agent uses during experiments:
+### 3.2 Task (the contract)
 
-| Field | Type | Description |
-|---|---|---|
-| `id` | `str` (ULID) | Tool identifier |
-| `name` | `str` | Tool name (e.g., `load_dataset`, `evaluate_model`) |
-| `description` | `str` | What the tool does |
-| `type` | `ToolType` | `data_loader`, `evaluator`, `preprocessor`, `custom` |
-| `code` | `str` | Executable Python code for this tool |
-| `parameters` | `dict` | JSON Schema for tool parameters |
-| `created_by` | `str` | `"human"` or `"agent"` — who created it |
-| `created_at` | `datetime` | Creation timestamp |
+The Task is the framework's anti-cheating mechanism. It defines what the agent is allowed to change and what is frozen.
 
-**Tool creation** supports two paths:
-1. **Manual via API** — A human specifies name, description, code, and parameters
-2. **AI-assisted** — The agent outputs structured JSON (and code) for tool definitions, which the system registers
+```python
+class TaskType(StrEnum):
+    REGRESSION = "regression"
+    # CLASSIFICATION, FORECASTING, GENERATIVE, CUSTOM are future — do not implement preemptively
 
-### 2.2 Experiments (agent-created under domains)
+class Direction(StrEnum):
+    MINIMIZE = "minimize"
+    MAXIMIZE = "maximize"
 
-Experiments remain the unit of execution but are now always scoped to a domain. The agent must be able to **create, modify, and complete experiments rapidly** — the overhead must be minimal to enable thousands of experiments per domain.
+@dataclass
+class Task:
+    id: str = field(default_factory=generate_id)
+    type: TaskType = TaskType.REGRESSION
+    name: str = ""
+    description: str = ""
+    primary_metric: str = "rmse"        # filled from registry default; user can override
+    direction: Direction = Direction.MINIMIZE
+    tools: list[DomainTool] = field(default_factory=list)
+    config: dict[str, Any] = field(default_factory=dict)  # task-specific (data path, target column, test split, etc.)
+    frozen: bool = False                # once True, tools cannot be modified for any subsequent run
+    created_at: datetime = ...
+    updated_at: datetime = ...
+```
 
-| Field | Type | Description |
-|---|---|---|
-| `id` | `str` (ULID) | Unique identifier |
-| `domain_id` | `str` | Parent domain |
-| `hypothesis` | `Hypothesis` | What the experiment tests |
-| `config` | `dict` | Experiment configuration |
-| `state` | `ExperimentState` | `PENDING → RUNNING → COMPLETED/FAILED → ARCHIVED` |
-| `result` | `ExperimentResult` | Metrics, artifacts, logs, error |
-| `metadata` | `dict` | Extensible metadata the agent can update freely |
-| `created_at` | `datetime` | Creation timestamp |
-| `updated_at` | `datetime` | Last update timestamp |
+#### Per-type registry
 
-**Key change from current**: `task_id` → `domain_id`. The state machine stays the same. Agents should be able to batch-create experiments and update statuses with minimal friction.
+```python
+@dataclass
+class TaskTypeSpec:
+    default_metric: str
+    default_direction: Direction
+    required_tools: list[ToolContract]    # spec of tools that must be present and frozen
+    generation_prompt_template: str       # input to AI tool generation
+    config_schema: dict                   # JSON schema for Task.config (e.g., target_column, test_split)
 
-### 2.3 Knowledge Atoms (linked, versioned, compressed)
+TASK_TYPE_REGISTRY: dict[TaskType, TaskTypeSpec] = {
+    TaskType.REGRESSION: TaskTypeSpec(
+        default_metric="rmse",
+        default_direction=Direction.MINIMIZE,
+        required_tools=[
+            ToolContract(
+                name="load_data",
+                description="Load and split the dataset",
+                returns_schema={"X_train": "array", "X_test": "array",
+                                "y_train": "array", "y_test": "array"},
+            ),
+            ToolContract(
+                name="evaluate",
+                description="Evaluate predictions against y_test",
+                params_schema={"y_pred": "array"},
+                returns_schema={"rmse": "float", "r2": "float", "mae": "float"},
+            ),
+        ],
+        generation_prompt_template=...,
+        config_schema={"target_column": "str", "test_split_ratio": "float", "data_path": "str"},
+    ),
+}
+```
 
-Knowledge atoms are the durable output of the system. They are **not strictly linked to one experiment** — they live in a many-to-many relationship with experiments and domains through the knowledge linking system.
+#### What "frozen" means concretely
 
-| Field | Type | Description |
-|---|---|---|
-| `id` | `str` (ULID) | Unique identifier |
-| `context` | `str` | What situation or conditions this knowledge applies to |
-| `claim` | `str` | The factual assertion |
-| `action` | `str` | Recommended action based on this knowledge |
-| `confidence` | `float` | 0.0–1.0 confidence score |
-| `evidence_ids` | `list[str]` | Experiment IDs that support this atom |
-| `version` | `int` | Version number (incremented on updates) |
-| `supersedes` | `str | None` | ID of the atom this one replaces |
-| `created_at` | `datetime` | Creation timestamp |
-| `updated_at` | `datetime` | Last update timestamp |
+- `Task.frozen = False`: tools can be regenerated, edited, swapped. Agent runs are blocked.
+- User clicks "Approve & freeze task" (or `POST /domains/{id}/task/freeze`) → `frozen = True`.
+- Once frozen, every subsequent agent run loads the *exact same* tool definitions. The agent cannot modify them. Editing a frozen task requires explicitly unfreezing (which invalidates prior experiment comparisons — surface this in UI later).
+
+### 3.3 Workspace (existing, no changes)
+
+[`src/dojo/core/domain.py:38`](src/dojo/core/domain.py#L38). Already supports `local` / `git` / `empty` source and auto-detects `.venv` / `pyproject.toml` / `requirements.txt`. Setup happens once via `WorkspaceService.setup(domain)`; the agent reuses the prepared env on every run.
+
+### 3.4 Experiment (minor changes)
+
+[`src/dojo/core/experiment.py`](src/dojo/core/experiment.py). Stays scoped to a Domain (and therefore implicitly to its Task). `CodeRun` already records each `run_experiment_code` call. The state machine is unchanged: `PENDING → RUNNING → COMPLETED | FAILED → ARCHIVED`.
+
+The training code the agent passes to `run_experiment_code` is what mirrors Karpathy's `train.py`. Per-run, that code is allowed to be anything; per-domain, what it can *do* is constrained by the Task tools available to it.
+
+### 3.5 Knowledge atoms + linking (existing, no changes for now)
+
+The current [`KeywordKnowledgeLinker`](src/dojo/runtime/keyword_linker.py) is fine. Atoms are immutable; links are `CREATED_BY` and `RELATED_TO`. We can swap in an agentic linker later behind the same `KnowledgeLinker` interface, but it's not on the critical path.
 
 ---
 
-## 3. Knowledge Linking & Evolution
+## 4. The anti-cheating boundary, in practice
 
-This is the most significant new abstraction. Every knowledge atom produced by an experiment **must go through a linking process** — there is no "fire and forget" knowledge creation.
+This is the section that justifies the whole design. If this is wrong, nothing else matters.
 
-### 3.1 The Linking Process
+### What the agent can do during a run
 
-When an agent produces a knowledge atom from an experiment:
+- Call `load_data` → returns the pre-split data. The agent never sees the un-split data and never picks the split.
+- Write training code → submit it via `run_experiment_code`. This is the agent's mutable surface.
+- Call `evaluate(y_pred)` → frozen tool, returns the metric dict including the primary metric.
+- Call `log_metrics(metrics)` → records the metric dict to `TrackingConnector`.
+- Call `write_knowledge(...)` → routes through `KnowledgeLinker`, records a finding.
 
-```
-Agent produces finding
-       │
-       ▼
-  Linking Process
-       │
-       ├── Search existing atoms for semantic overlap
-       │
-       ├── MATCH FOUND ──► Merge / Update existing atom
-       │   - Increase confidence if evidence agrees
-       │   - Decrease confidence if evidence conflicts
-       │   - Add experiment to evidence_ids
-       │   - Increment version
-       │   - Record the superseded version
-       │
-       └── NO MATCH ──► Create new atom
-           - Link to experiment
-           - Set initial confidence
-           - Version = 1
-```
+### What the agent cannot do
 
-This is **knowledge compression** — instead of accumulating thousands of duplicate or near-duplicate findings, the system continuously consolidates. The agent drives this process but the system enforces that it happens.
+- Modify `load_data` or `evaluate` mid-run (or between runs without unfreezing the task)
+- Compute its own metric and report it as the primary metric
+- Access the test set directly — the split is performed inside `load_data`
+- Re-train evaluation code in the same `run_experiment_code` call
 
-### 3.2 Knowledge Links (many-to-many)
+### Enforcement points
 
-A new `KnowledgeLink` entity connects atoms to experiments and domains:
+1. **Tool registration:** `collect_all_tools(lab, domain)` only includes the Task's frozen tools (plus the platform tools `create_experiment`, `complete_experiment`, `run_experiment_code`, `write_knowledge`, etc.). The agent gets exactly that set.
+2. **System prompt:** the prompt explicitly tells the agent which surface it owns, and that the metric reported by `evaluate` is what counts.
+3. **Tool immutability:** tools are loaded from the Task at run-start; the agent cannot register new tools at runtime.
+4. **Metric source:** `complete_experiment` records the metric dict that came out of the `evaluate` tool, not anything else the agent might have computed.
 
-| Field | Type | Description |
-|---|---|---|
-| `id` | `str` (ULID) | Link identifier |
-| `atom_id` | `str` | Knowledge atom |
-| `experiment_id` | `str` | Related experiment |
-| `domain_id` | `str` | Domain (denormalized for fast queries) |
-| `link_type` | `LinkType` | `created_by`, `updated_by`, `supported_by`, `contradicted_by` |
-| `created_at` | `datetime` | When this link was established |
+### Soft enforcement (good-faith, not airtight)
 
-This enables:
-- "Which experiments produced or modified this knowledge atom?"
-- "What knowledge has this domain generated?"
-- "Show me atoms relevant to domain X that were discovered in domain Y" (cross-domain knowledge)
+The `Bash` and `Write` Claude builtins are still allowed for productivity — the agent can read files, do quick checks, etc. A truly adversarial agent could in principle bypass `evaluate` by reading data directly and computing its own score. We accept this for now because:
 
-### 3.3 Knowledge Evolution & Versioning
+- Our agents are not adversarial; they're constrained-but-cooperative LLM agents.
+- The structural separation (`evaluate` is frozen, `complete_experiment` records what `evaluate` returns) means even an agent computing a side metric still has to declare a metric *via the official channel* — and that's the one we trust.
+- Hard enforcement (sandboxed file ACLs, network isolation) belongs in the sandboxed cloud execution layer, which is the **closed** part of the open-core split.
 
-Every atom mutation creates a version. The system stores **snapshots** to enable knowledge evolution visualization:
-
-| Field | Type | Description |
-|---|---|---|
-| `id` | `str` (ULID) | Snapshot ID |
-| `atom_id` | `str` | Which atom |
-| `version` | `int` | Version at snapshot time |
-| `confidence` | `float` | Confidence at this point |
-| `claim` | `str` | Claim text at this point |
-| `evidence_ids` | `list[str]` | Evidence at this point |
-| `timestamp` | `datetime` | When this snapshot was taken |
-
-This allows the frontend to render "knowledge evolution" — how confidence and content changed over time as more experiments ran.
+So: **structural anti-cheating now, hardened anti-cheating in the closed cloud layer later.**
 
 ---
 
-## 4. Architecture
+## 5. AI-generated tool flow (and why it's load-bearing)
 
-### 4.1 Hexagonal Architecture (preserved)
+The magic of Dojo is that a user describes their data and evaluation in natural language, and the framework generates working tools. Without this, every domain requires hand-written Python — and we're back to "wire Claude to a Jupyter notebook."
 
-The existing ports & adapters pattern stays. The key change is expanding the domain model layer and adding the knowledge linking abstraction.
+### Generation flow
 
 ```
-┌──────────────────────────────────────────────────────┐
-│                    Frontend (React)                    │
-│  Domain Overview → Experiment List → Knowledge Graph  │
-│  Agent Chat → Metric Evolution → Knowledge Evolution  │
-└───────────────────────┬──────────────────────────────┘
-                        │ HTTP / SSE
-┌───────────────────────▼──────────────────────────────┐
-│                    API Layer (FastAPI)                 │
-│  /domains  /experiments  /knowledge  /agent  /config  │
-└───────────────────────┬──────────────────────────────┘
-                        │
-┌───────────────────────▼──────────────────────────────┐
-│                   Runtime Layer                        │
-│  AgentOrchestrator  ExperimentService  KnowledgeLinker│
-│                  LabEnvironment (DI)                   │
-└───────────────────────┬──────────────────────────────┘
-                        │
-┌───────────────────────▼──────────────────────────────┐
-│                  Interface Layer (ABCs)                │
-│  DomainStore  ExperimentStore  MemoryStore  Tracking  │
-│  KnowledgeLinkStore  ComputeBackend  Sandbox         │
-└───────────────────────┬──────────────────────────────┘
-                        │
-┌───────────────────────▼──────────────────────────────┐
-│               Adapter Layer (Implementations)         │
-│  Local (JSON/files)  ·  MLflow  ·  Future: Postgres  │
-└──────────────────────────────────────────────────────┘
+1. User creates Domain + Task (type=REGRESSION, points at workspace)
+   └── User answers a small structured prompt: data file? target column? test split? extra context?
+
+2. Framework calls AI tool generation
+   └── For each ToolContract in TASK_TYPE_REGISTRY[REGRESSION].required_tools:
+         build a prompt that includes:
+           - the task type spec (return schema, param schema)
+           - the user's natural-language context
+           - the workspace tree summary (already built by WorkspaceScanner)
+         call the LLM, parse the returned tool code
+
+3. Framework verifies each generated tool        ←—— NEW: this step is missing today
+   └── Run the tool in the sandbox with sample inputs
+   └── Confirm output shape matches ToolContract
+   └── Record verification result on the tool
+
+4. User reviews the generated tools (UI later; CLI / API for now)
+   └── Reads the code, the example output, the verification result
+   └── Approves all → POST /domains/{id}/task/freeze
+
+5. Task is now frozen — agent runs are unblocked
 ```
 
-### 4.2 New / Modified Interfaces
+### Verification step (new)
 
-| Interface | Status | Methods |
-|---|---|---|
-| `DomainStore` | **NEW** | `save`, `load`, `list`, `delete`, `update` |
-| `KnowledgeLinkStore` | **NEW** | `link`, `unlink`, `get_links_for_atom`, `get_links_for_experiment`, `get_links_for_domain`, `get_atoms_for_domain` |
-| `MemoryStore` | **MODIFIED** | Add `update(atom)`, `get_version_history(atom_id)`, `get_snapshot(atom_id, version)` |
-| `ExperimentStore` | **MODIFIED** | `task_id` filter → `domain_id` filter |
-| `TrackingConnector` | **UNCHANGED** | Experiment-level tracking stays the same |
-| `ComputeBackend` | **UNCHANGED** | — |
-| `Sandbox` | **UNCHANGED** | — |
-| `ArtifactStore` | **UNCHANGED** | — |
+Currently AI-generated tools are returned as suggestions and registered manually with no automated check ([api/routers/domains.py:485-533](src/dojo/api/routers/domains.py#L485-L533)). We need a verifier:
 
-### 4.3 Runtime Services
+- Build sample inputs from `ToolContract.params_schema`
+- Execute the tool in `LocalSandbox` against the workspace
+- Parse stdout as JSON, validate against `ToolContract.returns_schema`
+- Record `{"verified": True/False, "errors": [...], "sample_output": {...}}` on the tool
+- Block freezing the task if any required tool failed verification
 
-| Service | Status | Role |
-|---|---|---|
-| `ExperimentService` | **MODIFIED** | Experiments now scoped to domains. Batch operations for rapid experiment creation. |
-| `KnowledgeLinker` | **NEW** | Drives the linking process. Every knowledge write goes through here. The agent calls `produce_knowledge(finding, experiment_id, domain_id)` → linker searches, merges or creates, links, and versions. |
-| `DomainService` | **NEW** | CRUD + tool management for domains. Creates agent runs scoped to a domain. |
-| `LabEnvironment` | **MODIFIED** | Add `domain_store`, `knowledge_link_store` fields. |
+This is the difference between "vibe-checked AI output" and "the framework knows the tools work."
 
-### 4.4 Agent System
+### Cleanup: Claude CLI vs Anthropic API
 
-The `AgentOrchestrator` is extended to be domain-aware:
+Today, runs go through the local `claude` CLI subprocess (no API key needed) but tool generation in [`api/routers/domains.py:500`](src/dojo/api/routers/domains.py#L500) calls `backend.complete()` which falls into [`agents/backends/claude.py:117-130`](src/dojo/agents/backends/claude.py#L117-L130) — a separate `anthropic.AsyncAnthropic()` client requiring `ANTHROPIC_API_KEY`. Two auth paths is confusing.
 
-1. **Domain-scoped runs** — When an agent runs, it receives the domain's steering prompt, available domain-specific tools, and accumulated knowledge
-2. **Recursive experiment creation** — The agent plans, creates, and executes experiments in a loop. It can create many experiments within a single run
-3. **Mandatory knowledge linking** — The agent's `write_knowledge` tool now routes through `KnowledgeLinker` instead of directly into `MemoryStore`. The tool returns linking results so the agent knows whether it created new knowledge or merged with existing
-4. **Domain tool injection** — Domain-specific tools are registered as additional `ToolDef` entries and injected into the agent's available tools at run time
-
-#### Updated Agent Tools
-
-| Tool | Change | Description |
-|---|---|---|
-| `create_experiment` | **Modified** | Now requires `domain_id` instead of `task_id` |
-| `complete_experiment` | Unchanged | — |
-| `fail_experiment` | Unchanged | — |
-| `write_knowledge` | **Modified** | Routes through `KnowledgeLinker`. Returns linking result (created/merged/atom_id/version) |
-| `search_knowledge` | **Modified** | Optional `domain_id` filter for domain-scoped search |
-| `list_knowledge` | **Modified** | Optional `domain_id` filter |
-| `log_metrics` | Unchanged | — |
-| `log_params` | Unchanged | — |
-| `compare_experiments` | **Modified** | Can filter by `domain_id` |
-| *Domain tools* | **New** | Dynamic tools from domain definition injected per-run |
+**Resolution:** route `backend.complete()` through the same `ClaudeSDKClient` mechanism as runs (one-shot configure → execute with no tools, capture the text). One auth path.
 
 ---
 
-## 5. API Design
+## 6. Architecture (hexagonal, preserved)
 
-### 5.1 Domain Endpoints
+The ports & adapters layout stays. The new pieces fit cleanly into existing layers.
 
-| Method | Path | Description |
+```
+┌──────────────────────────────────────────────────────────────┐
+│ Frontend (de-prioritized)                                     │
+│ Domain overview · Domain detail · Agent chat                  │
+└──────────────────────────────┬───────────────────────────────┘
+                               │ HTTP / SSE
+┌──────────────────────────────▼───────────────────────────────┐
+│ API (FastAPI)                                                 │
+│ /domains  /tasks  /experiments  /knowledge  /agent  /tracking│
+└──────────────────────────────┬───────────────────────────────┘
+                               │
+┌──────────────────────────────▼───────────────────────────────┐
+│ Runtime services                                              │
+│ DomainService · TaskService (NEW) · ExperimentService         │
+│ WorkspaceService · KnowledgeLinker · ToolGenerator (existing) │
+│ ToolVerifier (NEW) · AgentOrchestrator                        │
+│                LabEnvironment (DI dataclass)                  │
+└──────────────────────────────┬───────────────────────────────┘
+                               │
+┌──────────────────────────────▼───────────────────────────────┐
+│ Interfaces (ABCs)                                             │
+│ DomainStore · ExperimentStore · MemoryStore · TrackingConnector│
+│ KnowledgeLinkStore · KnowledgeLinker · ComputeBackend · Sandbox│
+└──────────────────────────────┬───────────────────────────────┘
+                               │
+┌──────────────────────────────▼───────────────────────────────┐
+│ Adapters                                                      │
+│ Local (JSON) · MLflow · File tracker · Local sandbox · Local  │
+│ compute · Claude / Stub agent backends                        │
+└──────────────────────────────────────────────────────────────┘
+```
+
+### What changes
+
+| Layer | Component | Change |
 |---|---|---|
-| `POST` | `/domains` | Create a domain (name, description, prompt, optional tools) |
-| `GET` | `/domains` | List all domains with status summary |
-| `GET` | `/domains/{id}` | Get domain with experiment count, knowledge count, agent status |
-| `PUT` | `/domains/{id}` | Update domain (prompt, metadata, status) |
-| `DELETE` | `/domains/{id}` | Archive/delete domain |
-| `POST` | `/domains/{id}/tools` | Add a domain-specific tool (manual or AI-generated JSON) |
-| `GET` | `/domains/{id}/tools` | List domain tools |
-| `PUT` | `/domains/{id}/tools/{tool_id}` | Update a domain tool |
-| `DELETE` | `/domains/{id}/tools/{tool_id}` | Remove a domain tool |
-| `POST` | `/domains/{id}/generate-tools` | AI-assisted: agent generates tool definitions for the domain |
+| `core/` | `Task`, `TaskType`, `Direction`, `ToolContract`, `TaskTypeSpec`, `TASK_TYPE_REGISTRY` | NEW — single file `core/task.py` |
+| `core/` | `Domain` | Modified — `tools` field removed; `task: Task | None` added |
+| `core/` | `DomainTool` | Stays as-is (now lives on Task instead of Domain) |
+| `runtime/` | `TaskService` | NEW — task creation, tool generation orchestration, freezing |
+| `runtime/` | `ToolVerifier` | NEW — sandbox-runs each tool and validates against ToolContract |
+| `runtime/` | `DomainService` | Modified — no longer manages tools directly |
+| `tools/` | `tool_generation.py` | Modified — registry-aware prompt building, returns ToolContract-shaped tools |
+| `tools/` | `domain_tools.py` | Renamed to `task_tools.py`; loads tools from `domain.task.tools` instead of `domain.tools` |
+| `agents/` | `prompts.py` | Modified — frame the contract clearly: agent owns training code, evaluate is the source of truth |
+| `agents/` | `orchestrator.py` | Modified — block run start if `domain.task is None` or `domain.task.frozen is False` |
+| `api/` | `routers/domains.py` | Modified — task and tool endpoints move under `/domains/{id}/task/...`; tool generation produces verified-but-unfrozen tools |
+| `api/` | `routers/agent.py` | Modified — explicit error if domain has no frozen task |
+| `storage/` | `local/domain.py` | Modified — Domain JSON serialisation includes nested Task |
 
-### 5.2 Experiment Endpoints (modified)
+### What stays the same
 
-| Method | Path | Description |
-|---|---|---|
-| `GET` | `/experiments?domain_id=` | List experiments, filterable by domain |
-| `GET` | `/experiments/{id}` | Get experiment detail |
-| `GET` | `/domains/{id}/experiments` | List experiments for a domain |
-| `GET` | `/domains/{id}/metrics` | Metric evolution across all experiments in a domain |
-
-### 5.3 Knowledge Endpoints (modified)
-
-| Method | Path | Description |
-|---|---|---|
-| `GET` | `/knowledge?domain_id=` | List atoms, filterable by domain via links |
-| `GET` | `/knowledge/{id}` | Get atom with full version history and links |
-| `GET` | `/knowledge/{id}/history` | Version history for an atom |
-| `GET` | `/knowledge/relevant?query=&domain_id=&limit=` | Search with optional domain scoping |
-| `POST` | `/knowledge` | Direct atom creation (still goes through linker) |
-| `DELETE` | `/knowledge/{id}` | Delete atom |
-| `GET` | `/domains/{id}/knowledge` | All knowledge atoms linked to a domain |
-| `GET` | `/domains/{id}/knowledge/evolution` | Knowledge evolution snapshots for a domain |
-
-### 5.4 Agent Endpoints (modified)
-
-| Method | Path | Description |
-|---|---|---|
-| `POST` | `/agent/run` | Start agent run (now requires `domain_id`) |
-| `GET` | `/agent/runs?domain_id=` | List runs, filterable by domain |
-| `GET` | `/agent/runs/{id}` | Get run detail |
-| `POST` | `/agent/runs/{id}/stop` | Stop a running agent |
-| `GET` | `/agent/runs/{id}/events` | SSE event stream |
-
-### 5.5 Retained Endpoints
-
-| Method | Path | Description |
-|---|---|---|
-| `GET` | `/health` | Health check |
-| `GET` | `/config` | Public config summary |
-| `GET` | `/tracking/{experiment_id}/metrics` | Per-experiment tracked metrics |
+`Workspace`, `WorkspaceService`, `WorkspaceScanner`, `ExperimentService`, `KnowledgeLinker` (keyword-overlap), `KnowledgeLink`, all `TrackingConnector` adapters, all `Sandbox` and `ComputeBackend` adapters, all `MemoryStore` adapters, the SSE event mechanism, the entire ULID + structlog + ruff convention layer.
 
 ---
 
-## 6. Frontend
+## 7. End-to-end lifecycle
 
-### 6.1 Design Philosophy
-
-**Super lean.** Three levels of hierarchy: Domain → Experiments → Knowledge. Agents operate at the experiment level. Humans set up domains (with AI help for tool creation).
-
-### 6.2 Pages
-
-#### Main Page — Domain Overview (`/`)
-
-- **Empty state**: If no domains exist, show a centered prompt: *"Create your first research domain"* with a create button
-- **Domain list**: Card grid showing each domain with:
-  - Name, description, status badge
-  - Experiment count (running / total)
-  - Knowledge atom count
-  - Active agent indicator (running / idle)
-  - Last activity timestamp
-- **Create domain** button → modal/drawer with form
-
-#### Domain Page (`/domains/{id}`)
-
-A single page with sections, not sub-routes:
-
-**Header**
-- Domain name, status, description
-- Domain steering prompt (collapsible)
-- Edit / Pause / Resume actions
-
-**Experiments Section**
-- Running agents and which experiments they're working on (live)
-- Experiment table/list: status, hypothesis, key metrics, timestamp
-- Quick filters: status, date range
-
-**Metric Evolution Chart**
-- Line chart showing key metrics across experiments over time
-- Selectable metrics (from tracking data)
-- Zoom, hover for experiment detail
-
-**Knowledge Evolution Chart**
-- Timeline visualization of knowledge atoms
-- Shows: new atoms created, existing atoms updated, confidence changes over time
-- Can drill into specific atom version history
-
-**Domain Tools Section**
-- List of registered tools with name, type, description
-- Click to expand: see code, parameters, creation source (human/agent)
-- Add tool button (manual or AI-assisted)
-
-**Agent Chat / Output Window**
-- When an agent is running: live streaming output (SSE events)
-- Shows which experiment the agent is currently working on
-- Historical run output for completed runs
-- Start new run / stop current run controls
-
-### 6.3 Removed / Simplified Pages
-
-The current multi-page layout (Dashboard, Tasks, Experiments, Knowledge, Agent) collapses to:
-
-| Old | New |
-|---|---|
-| Dashboard | → Domain overview (main page) |
-| Tasks | → **Removed** (replaced by domains) |
-| Experiments | → Section in domain page |
-| Knowledge | → Section in domain page + cross-domain search if needed |
-| Agent | → Section in domain page |
-
-### 6.4 Frontend Data Flow
-
-```
-useDomains()           → GET /domains
-useDomain(id)          → GET /domains/{id}
-useDomainExperiments() → GET /domains/{id}/experiments
-useDomainMetrics()     → GET /domains/{id}/metrics
-useDomainKnowledge()   → GET /domains/{id}/knowledge
-useDomainTools()       → GET /domains/{id}/tools
-useKnowledgeEvolution()→ GET /domains/{id}/knowledge/evolution
-useAgentRuns(domainId) → GET /agent/runs?domain_id=
-useAgentEvents(runId)  → GET /agent/runs/{id}/events (SSE)
-```
-
----
-
-## 7. Data Flow: End-to-End Lifecycle
+The mental model for what a Dojo session looks like.
 
 ```
 1. Human creates a Domain
-   ├── Defines name, description, steering prompt
-   ├── Optionally adds domain-specific tools (or asks AI to generate them)
-   └── Domain status → ACTIVE
+   ├── Names it, writes a steering prompt ("Predict California housing prices...")
+   └── Configures workspace (local repo / git url) → WorkspaceService.setup()
 
-2. Human starts an Agent Run on the domain
-   ├── Agent receives: domain prompt + accumulated knowledge + domain tools
+2. Human creates the Task on that Domain
+   ├── Picks RegressionTask
+   ├── Provides data path, target column, test split (Task.config)
+   └── Optionally: extra natural-language context for tool generation
+
+3. Framework generates tools (AI-assisted)
+   ├── For each required_tool in TASK_TYPE_REGISTRY[REGRESSION]:
+   │     LLM produces tool code → ToolVerifier runs in sandbox → records result
+   ├── Human reviews generated tools (code + sample output + verification status)
+   └── Human approves → Task.frozen = True
+
+4. Human starts an agent run
+   ├── Domain has a frozen task — orchestrator allows the run
+   ├── System prompt frames the contract: agent owns training code, frozen tools own data + eval
    └── Agent enters research loop:
 
-   3. Agent plans experiment
-      ├── Searches existing knowledge
-      ├── Identifies gaps or hypotheses to test
-      └── Creates experiment (state → RUNNING)
+   5. Agent plans an experiment
+      ├── Searches accumulated knowledge for the domain
+      ├── Forms a hypothesis ("baseline linear regression")
+      └── create_experiment(domain_id, hypothesis) → state RUNNING
 
-   4. Agent executes experiment
-      ├── Writes code (using domain tools + sandbox)
-      ├── Runs code, collects results
-      ├── Logs metrics and params to tracking
-      └── Completes or fails experiment
+   6. Agent executes
+      ├── run_experiment_code(experiment_id, code=...)
+      │     The code calls load_data(), trains, calls evaluate(y_pred)
+      │     evaluate() returns {"rmse": 4.2, "r2": 0.87, "mae": 3.1}
+      ├── log_metrics(experiment_id, those metrics)
+      └── complete_experiment(experiment_id, metrics)
 
-   5. Agent produces knowledge
-      ├── Formulates finding as knowledge atom
-      ├── Calls write_knowledge (→ KnowledgeLinker)
-      │   ├── Linker searches for semantic overlap
-      │   ├── MATCH: Merges with existing atom, increments version
-      │   └── NO MATCH: Creates new atom, version 1
-      ├── Links created: atom ↔ experiment ↔ domain
-      └── Snapshot recorded for evolution tracking
+   7. Agent records knowledge
+      └── write_knowledge(context, claim, action, confidence, evidence_ids=[experiment_id])
+            → KnowledgeLinker creates new atom + RELATED_TO links to similar prior atoms
 
-   6. Agent loops back to step 3
-      ├── Uses updated knowledge to plan next experiment
-      ├── May create dozens/hundreds of experiments per run
-      └── Stops when: max turns reached / human stops / goals met
+   8. Agent loops back to step 5 — uses the new knowledge to plan the next experiment
+      └── Stops when max_turns reached, max_budget_usd reached, or human stops
 
-7. Human reviews results
-   ├── Metric evolution chart shows progress over time
-   ├── Knowledge evolution shows what was learned
-   ├── Can start new agent runs to continue research
-   └── Can pause, reconfigure, or archive the domain
+9. Human reviews
+   ├── Metric evolution chart over experiments in the domain
+   ├── Knowledge atoms — what was learned
+   ├── Iterates on the steering prompt
+   └── Starts another run, possibly with the prompt updated
 ```
 
 ---
 
-## 8. Implementation Plan
+## 8. State the codebase needs to be in to ship this
 
-### Phase 1: Domain Foundation
+### Cleanup before / during the rewrite
 
-**Goal**: Replace tasks with domains, maintain all current functionality.
+These are pre-existing cruft items that this rewrite touches anyway. Most are small.
 
-1. **Core domain model** — Create `Domain`, `DomainTool`, `DomainStatus` in `core/`
-2. **DomainStore interface** — ABC in `interfaces/`
-3. **LocalDomainStore adapter** — JSON file persistence in `storage/`
-4. **Refactor Experiment** — `task_id` → `domain_id` throughout
-5. **Domain API routes** — Full CRUD + tool management
-6. **DomainService** — Runtime orchestration
-7. **Update LabEnvironment** — Add `domain_store`
-8. **Update build_lab** — Wire `DomainStore`
-9. **Migrate agent tools** — `create_experiment` takes `domain_id`
-10. **Tests** — Unit + E2E for domain lifecycle
+1. **In-memory agent runs** ([api/routers/agent.py:19](src/dojo/api/routers/agent.py#L19)) — the `_runs` dict still holds run state. Recent commit `95faee5` started persisting runs but the in-memory store hasn't been reconciled. **Disk must be the single source of truth** — without that, a CLI-started run is invisible to a separately-running HTTP server, and vice versa, breaking the "CLI and server are peers" invariant. The fix is a Phase 1 prerequisite, not Phase 0 cleanup.
+2. **Stale `AGENTS.md`** — predates Domains, Workspaces, Claude backend. Either rewrite to point at [CLAUDE.md](CLAUDE.md) or delete.
+3. **Legacy `task_id` references in frontend** ([frontend/src/hooks/use-tasks.ts](frontend/src/hooks/use-tasks.ts), old pages) — drop them; the backend `Task` model is gone.
+4. **Stale plan docs in `docs/`** — many are superseded by this MASTER_PLAN. Audit and delete or archive.
+5. **Claude CLI vs Anthropic API split** (covered in §5) — unify auth paths.
 
-### Phase 2: Knowledge Linking & Evolution
+### What this plan explicitly does *not* change
 
-**Goal**: Knowledge atoms are linked, versioned, and compressed.
-
-1. **KnowledgeLink model** — `core/knowledge.py`
-2. **KnowledgeSnapshot model** — Version history
-3. **KnowledgeLinkStore interface** — ABC in `interfaces/`
-4. **LocalKnowledgeLinkStore** — JSON file adapter
-5. **KnowledgeLinker service** — Runtime linking logic (search → merge-or-create → link → snapshot)
-6. **Update MemoryStore interface** — Add `update`, `get_version_history`
-7. **Update write_knowledge tool** — Route through linker, return linking results
-8. **Update search_knowledge tool** — Add `domain_id` filter
-9. **Knowledge evolution API endpoints** — Version history, snapshots
-10. **Tests** — Linking, merging, versioning round-trips
-
-### Phase 3: Domain-Scoped Agent Runs
-
-**Goal**: Agents are domain-aware and use domain tools.
-
-1. **Domain-scoped system prompt** — Include domain steering prompt and accumulated knowledge
-2. **Domain tool injection** — Register domain tools as `ToolDef` entries at run time
-3. **Agent run scoped to domain** — Require `domain_id` on agent run creation
-4. **Recursive experiment loop** — Agent can create/complete many experiments per run
-5. **Update agent router** — Domain-scoped run creation and listing
-6. **Metric evolution endpoint** — Aggregate metrics across domain experiments
-7. **Tests** — Agent run with domain tools, multiple experiments per run
-
-### Phase 4: Frontend Redesign
-
-**Goal**: Lean domain-centric UI.
-
-1. **Domain overview page** — Replace dashboard, empty state, domain cards
-2. **Domain detail page** — Experiments section with live agent status
-3. **Metric evolution chart** — Line chart with selectable metrics
-4. **Knowledge evolution chart** — Timeline of atom changes
-5. **Domain tools section** — List, detail, add (manual + AI-assisted)
-6. **Agent chat window** — SSE streaming, run history
-7. **Remove old pages** — Tasks page, standalone experiment/knowledge pages
-8. **New hooks** — `useDomains`, `useDomainExperiments`, `useKnowledgeEvolution`, etc.
-
-### Phase 5: AI-Assisted Tool Generation
-
-**Goal**: Agent can generate domain-specific tool definitions.
-
-1. **Tool generation prompt** — Given domain description, generate data loader / evaluator definitions
-2. **Structured output** — Agent returns JSON `DomainTool` definitions + code
-3. **Validation & registration** — Parse, validate, and register tools via API
-4. **Sandbox testing** — Optionally test generated tools in sandbox before registering
-5. **UI flow** — "Generate tools" button on domain page, review & approve
+- The hexagonal architecture
+- Knowledge linking implementation (`KeywordKnowledgeLinker` stays)
+- The `Workspace` design and `WorkspaceService.setup()` flow
+- Tracking adapters
+- The agent backend interface (Claude / Stub)
+- The MCP-based tool surface
+- The frontend (de-prioritized; it'll continue to work, but isn't part of this plan)
 
 ---
 
-## 9. What Stays The Same
+## 9. Implementation phases (high level)
 
-The following existing abstractions and implementations require **no major changes**:
+The detailed sequenced punch-list lives in [NEXT_STEPS.md](NEXT_STEPS.md). High level:
 
-| Component | Why it stays |
-|---|---|
-| `ExperimentState` state machine | Same transitions: PENDING → RUNNING → COMPLETED/FAILED → ARCHIVED |
-| `ExperimentService` | Same lifecycle orchestration, just scoped to domains |
-| `AgentBackend` interface | Claude/Stub backends unchanged — they execute prompts and yield events |
-| `AgentOrchestrator` | Same event loop, just receives domain context |
-| `ToolDef` / `ToolRegistry` | Same tool framework — domain tools are just more `ToolDef` instances |
-| `ToolAdapter` (Claude adapter) | No changes — converts `ToolDef` to SDK format |
-| `Sandbox` / `ComputeBackend` | Unchanged |
-| `ArtifactStore` | Unchanged |
-| `TrackingConnector` | Unchanged — still logs per-experiment |
-| `FileTracker` / `MlflowTracker` | Unchanged |
-| Config / Settings system | Extended with `DomainSettings` but core mechanism the same |
-| SSE streaming | Same mechanism, domain-scoped |
-
----
-
-## 10. Key Design Decisions
-
-### 10.1 Knowledge atoms are many-to-many, not owned by experiments
-
-An atom can be linked to experiments across multiple domains. The `KnowledgeLink` table is the authoritative relationship. `evidence_ids` on the atom itself is a convenience denormalization.
-
-### 10.2 Knowledge linking is mandatory, not optional
-
-Every `write_knowledge` call goes through `KnowledgeLinker`. The agent cannot bypass this. This ensures knowledge compression happens continuously and the knowledge base doesn't bloat with duplicates.
-
-### 10.3 Domains are persistent, agent runs are ephemeral-ish
-
-Domains are first-class persisted entities. Agent runs are important for observability but the lasting value is in the experiments and knowledge they produce. Runs should be persisted (unlike current in-memory storage) but are secondary to domains.
-
-### 10.4 Domain tools are code, not just descriptions
-
-Domain tools contain actual executable code. The agent uses them via the standard `ToolDef` mechanism. This means domain tools are sandboxed and have the same execution model as other agent tools.
-
-### 10.5 Versioned knowledge over mutable knowledge
-
-Knowledge atoms are versioned rather than silently mutated. Every change creates a snapshot. The current version is the "live" one, but history is always available. This supports knowledge evolution visualization and auditability.
-
-### 10.6 Frontend is domain-first, not feature-first
-
-The UI is organized around domains, not around "experiments page" or "knowledge page". A domain page is the single pane of glass for everything happening in that research area.
-
----
-
-## 11. Current State vs. Target
-
-| Capability | Current State | Target State |
+| Phase | Theme | Outcome |
 |---|---|---|
-| Top-level entity | `Task` (in-memory, minimal) | `Domain` (persisted, rich metadata, tools) |
-| Domain-specific tools | None | Full tool authoring (manual + AI-generated) |
-| Experiment scoping | `task_id` (loose) | `domain_id` (strict, persisted) |
-| Knowledge linking | None (atoms are standalone) | Many-to-many via `KnowledgeLink` |
-| Knowledge versioning | None | Full version history + snapshots |
-| Knowledge compression | None | `KnowledgeLinker` (search → merge-or-create) |
-| Knowledge search | Keyword only | Keyword + domain filter (future: embedding) |
-| Agent domain awareness | Basic task prompt | Domain prompt + accumulated knowledge + domain tools |
-| Metric evolution | Per-experiment only | Domain-wide aggregation over time |
-| Knowledge evolution | None | Timeline of atom changes per domain |
-| Frontend structure | 5 separate pages | 2 pages: domain overview + domain detail |
-| Agent run persistence | In-memory | Persisted |
-| Tool creation | Static (code-defined) | Dynamic (API + AI-generated) |
+| **0** ✅ | Cleanup *(done)* | Stale docs / legacy code gone; one Claude auth path; broken legacy `dojo run` reclaimed; lint clean |
+| **1** ✅ | Task abstraction + disk-as-source-of-truth *(done)* | `core/task.py` exists; `Domain` holds a `Task` and a `program_path`; storage round-trips; `RunStore` interface + `LocalRunStore` adapter persist runs to `.dojo/runs/`; orchestrator writes through on every status change and every 10 events; agent router reads through on cache miss |
+| **2** | CLI happy path + PROGRAM.md | `dojo init` / `dojo run` flow works in-process; current-domain state file; PROGRAM.md convention; `dojo task` / `dojo runs` / `dojo program` subcommands |
+| **3** | Tool verification + anti-cheating gating | `ToolVerifier` runs every generated tool in sandbox; freeze gate enforces verification; orchestrator blocks unfrozen / unverified runs; system prompt rewritten around the contract |
+| **4** | First real RegressionTask end-to-end via CLI | California housing dataset running cleanly via `dojo init && dojo run` alone; cheating + replay + knowledge accumulation tests pass |
+| **5** | Reconnaissance for what's next | Knowledge linker upgrade decision; wall-clock budget decision; first external user |
+
+Frontend work resumes only after Phase 4 — once the backend contract is solid and the CLI proves the loop, the UI changes are mechanical.
 
 ---
 
-## 12. File Structure (target)
+## 10. Karpathy autoresearch — explicit mapping
 
-```
-src/dojo/
-├── core/
-│   ├── domain.py          # Domain, DomainTool, DomainStatus
-│   ├── experiment.py       # Experiment (domain_id replaces task_id)
-│   ├── knowledge.py        # KnowledgeAtom (+ version, supersedes fields)
-│   ├── knowledge_link.py   # KnowledgeLink, KnowledgeSnapshot, LinkType
-│   └── state_machine.py    # Unchanged
-│
-├── interfaces/
-│   ├── domain_store.py     # NEW: DomainStore ABC
-│   ├── knowledge_link_store.py  # NEW: KnowledgeLinkStore ABC
-│   ├── experiment_store.py # Modified: domain_id filter
-│   ├── memory_store.py     # Modified: update, version history
-│   └── ...                 # Others unchanged
-│
-├── storage/
-│   ├── local_domain.py     # NEW: LocalDomainStore (JSON)
-│   ├── local_knowledge_link.py  # NEW: LocalKnowledgeLinkStore (JSON)
-│   └── ...                 # Others adapted
-│
-├── runtime/
-│   ├── lab.py              # Modified: + domain_store, knowledge_link_store
-│   ├── experiment_service.py  # Modified: domain-scoped
-│   ├── knowledge_linker.py    # NEW: KnowledgeLinker service
-│   └── domain_service.py     # NEW: DomainService
-│
-├── agents/
-│   ├── orchestrator.py     # Modified: domain-aware context injection
-│   ├── prompts.py          # Modified: domain steering prompt
-│   └── ...                 # Backends unchanged
-│
-├── tools/
-│   ├── experiments.py      # Modified: domain_id
-│   ├── knowledge.py        # Modified: routes through linker, domain filter
-│   ├── domain_tools.py     # NEW: dynamic tool registration from domain
-│   └── ...                 # Others unchanged
-│
-├── api/
-│   ├── routers/
-│   │   ├── domains.py      # NEW: domain CRUD + tools
-│   │   ├── experiments.py  # Modified: domain scoping
-│   │   ├── knowledge.py    # Modified: domain filter, evolution endpoints
-│   │   ├── agent.py        # Modified: domain-scoped runs
-│   │   └── ...             # Others unchanged
-│   ├── app.py              # Modified: register domain router
-│   └── deps.py             # Modified: build domain_store, knowledge_link_store
-│
-└── config/
-    └── settings.py         # Extended: domain defaults if needed
+Because this is the design north star, mapping it out keeps decisions consistent.
 
-frontend/src/
-├── pages/
-│   ├── domain-overview.tsx    # Main page — domain cards or empty state
-│   └── domain-detail.tsx      # Single domain — experiments, metrics, knowledge, tools, agent
-│
-├── components/
-│   ├── domains/
-│   │   ├── domain-card.tsx
-│   │   ├── domain-form.tsx
-│   │   └── domain-tools-section.tsx
-│   ├── experiments/
-│   │   └── experiment-table.tsx
-│   ├── charts/
-│   │   ├── metric-evolution.tsx
-│   │   └── knowledge-evolution.tsx
-│   ├── knowledge/
-│   │   └── knowledge-timeline.tsx
-│   └── agent/
-│       └── agent-chat.tsx
-│
-├── hooks/
-│   ├── use-domains.ts
-│   ├── use-domain.ts
-│   ├── use-domain-experiments.ts
-│   ├── use-domain-knowledge.ts
-│   ├── use-domain-metrics.ts
-│   ├── use-knowledge-evolution.ts
-│   └── use-agent.ts          # Modified: domain-scoped
-│
-└── types.ts                  # Extended: Domain, DomainTool, KnowledgeLink, etc.
-```
+| Karpathy autoresearch | Dojo equivalent |
+|---|---|
+| One repo per problem | One Domain |
+| `prepare.py` (frozen) — data prep, dataloader, evaluation | `Task.tools` — `load_data` + `evaluate`, frozen at task-freeze time |
+| `train.py` (agent edits) | Code passed to `run_experiment_code` per experiment |
+| `program.md` (human edits) | `PROGRAM.md` file at `<workspace>/PROGRAM.md` (or domain-local fallback), loaded into `Domain.prompt` at run start |
+| Fixed 5-min wall-clock budget | `max_turns` / `max_budget_usd` / future wall-clock budget on agent run |
+| `val_bpb` metric, lower is better | `Task.primary_metric` + `Task.direction` (per `TaskTypeSpec`) |
+| Single GPU, single host | Single-tenant, local sandbox |
+| Agent edits one file (`train.py`) | Agent calls one mutable tool (`run_experiment_code`) |
+| Human iterates on `program.md` between sessions | Human iterates on `Domain.prompt` between sessions |
+
+A "Karpathy mode" Dojo Domain — once we add `GenerativeTask` later — is just `Domain(workspace=local repo) + Task(type=GENERATIVE, primary_metric="val_bpb", direction=MINIMIZE)`. Same shape, different Task type.
 
 ---
 
-## 13. Summary
+## 11. Success criteria
 
-Dojo evolves from a task-based experiment runner into a **domain-driven research platform** where:
+We'll know this design is working when:
 
-- **Humans define the "what"** — research domains with goals, data, and tools
-- **Agents handle the "how"** — recursively planning, executing, and learning from experiments
-- **Knowledge compounds** — through mandatory linking, versioning, and compression
-- **Everything is observable** — metric evolution, knowledge evolution, live agent output
+1. **One frozen RegressionTask runs end-to-end on a real dataset.** Agent only writes training code; metrics come from the frozen evaluator; results are reproducible run-over-run.
+2. **The agent cannot game the score** under good-faith use. If an agent rewrites a metric in its training code, it doesn't show up in `complete_experiment` — only what the frozen `evaluate` returned does.
+3. **Knowledge accumulates across runs.** A second run on the same Domain visibly uses findings from the first.
+4. **A new user can set up a domain in under 30 minutes.** Workspace + Task + AI-generated tools + freeze + first run.
+5. **3 real users (outside Marcus) have run a domain to completion** on their own data — the validation gate before considering the closed cloud layer.
 
-The core hexagonal architecture holds. The main additions are the domain model, knowledge linking layer, and a simplified domain-centric frontend. Most existing interfaces and adapters require only minor modifications (scoping to domains) rather than rewrites.
+---
+
+## 12. Decisions log
+
+Pinning the calls so they don't get re-litigated. If you disagree with one of these, raise it explicitly — don't drift.
+
+| # | Decision | Why | Date |
+|---|---|---|---|
+| 1 | One Task per Domain | Avoid bloat; Karpathy's pattern is one repo per task | 2026-05-03 |
+| 2 | Only `RegressionTask` for now | Make one work end-to-end before adding more | 2026-05-03 |
+| 3 | Typed via enum + registry, not class hierarchy | Fits the rest of the codebase (dataclasses + dispatch tables); JSON round-trips cleanly | 2026-05-03 |
+| 4 | Evaluation runs as a frozen tool, not built-in framework code | Regression evaluation is too use-case-specific to hard-code; tool path is consistent and extensible | 2026-05-03 |
+| 5 | Open-core, single-tenant, local-first | Validate before SaaS; keep the cheating-prevention story structural-only until cloud sandbox is built | 2026-05-03 |
+| 6 | No abstraction names containing "Dojo" | Project may be renamed | 2026-05-03 |
+| 7 | Frontend de-prioritized | Solidify the core contract first; UI is mechanical once the backend is right | 2026-05-03 |
+| 8 | CLI is the canonical surface; HTTP and frontend are peers | A user must be able to do everything from the terminal alone, in-process, without a running server. Frontend/SaaS sit on top of the same runtime layer the CLI uses. | 2026-05-03 |
+| 9 | `PROGRAM.md` is the editable steering prompt | Karpathy-style. Lives in the workspace by default. File content wins over `Domain.prompt` at run start so editing between runs takes effect without DB writes. | 2026-05-03 |
+
+---
+
+## 13. What's *not* in this plan
+
+Deliberately out of scope for this rewrite. We can revisit any of these later, but they should not influence current decisions.
+
+- **Recursive self-improvement / meta-agent.** A meta-agent that proposes hypotheses *for* the agent — interesting, but it sits *above* this layer and doesn't change anything below it.
+- **Embedding-based knowledge retrieval.** Keyword overlap is fine for now; an agentic linker comes later behind the existing interface.
+- **Multi-host / distributed compute.** All compute is local until the closed cloud layer.
+- **Notebook-style interactive runs.** The unit is an autonomous run, not a REPL session.
+- **Generic "task type plugin system".** Tasks are typed via the registry; we add new entries when we need them, not via a plugin mechanism.

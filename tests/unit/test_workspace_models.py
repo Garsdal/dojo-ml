@@ -1,6 +1,5 @@
 """Tests for Workspace and CodeRun models."""
 
-import pytest
 from dojo.core.domain import Domain, DomainTool, Workspace, WorkspaceSource
 from dojo.core.experiment import CodeRun, ExperimentResult
 

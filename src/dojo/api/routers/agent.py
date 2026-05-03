@@ -113,16 +113,24 @@ async def start_run(body: StartRunRequest, request: Request) -> AgentRunResponse
 
 
 @router.get("/runs", response_model=list[AgentRunResponse])
-async def list_runs() -> list[AgentRunResponse]:
-    """List all agent runs."""
-    return [_to_response(r) for r in _runs.values()]
+async def list_runs(request: Request) -> list[AgentRunResponse]:
+    """List all agent runs (in-process cache + persisted runs)."""
+    lab = _get_lab(request)
+    persisted = await lab.run_store.list()
+    # Merge: prefer in-process version (fresher events) when both exist
+    merged = {r.id: r for r in persisted}
+    merged.update(_runs)
+    return [_to_response(r) for r in merged.values()]
 
 
 @router.get("/runs/{run_id}", response_model=AgentRunResponse)
-async def get_run(run_id: str) -> AgentRunResponse:
-    """Get agent run status and events."""
+async def get_run(run_id: str, request: Request) -> AgentRunResponse:
+    """Get agent run status and events (in-process cache, then disk fallback)."""
     run = _runs.get(run_id)
-    if not run:
+    if run is None:
+        lab = _get_lab(request)
+        run = await lab.run_store.load(run_id)
+    if run is None:
         raise HTTPException(404, f"Run {run_id} not found")
     return _to_response(run)
 
@@ -138,9 +146,17 @@ async def stop_run(run_id: str) -> dict:
 
 
 @router.get("/runs/{run_id}/events")
-async def stream_events(run_id: str) -> EventSourceResponse:
-    """Server-Sent Events stream for an agent run."""
+async def stream_events(run_id: str, request: Request) -> EventSourceResponse:
+    """Server-Sent Events stream for an agent run.
+
+    If the run is active in this process, events stream live.
+    If the run was started by another process (CLI), events are replayed
+    from the persisted state on disk.
+    """
     run = _runs.get(run_id)
+    if run is None:
+        lab = _get_lab(request)
+        run = await lab.run_store.load(run_id)
     if not run:
         raise HTTPException(404, f"Run {run_id} not found")
 

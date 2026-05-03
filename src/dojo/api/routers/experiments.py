@@ -73,9 +73,7 @@ class CodeRunResponse(BaseModel):
 
 
 @router.get("/{experiment_id}/code", response_model=list[CodeRunResponse])
-async def list_experiment_code_runs(
-    experiment_id: str, request: Request
-) -> list[CodeRunResponse]:
+async def list_experiment_code_runs(experiment_id: str, request: Request) -> list[CodeRunResponse]:
     """List all code runs for an experiment."""
     lab = _get_lab(request)
     exp = await lab.experiment_store.load(experiment_id)
@@ -97,9 +95,7 @@ async def list_experiment_code_runs(
 
 
 @router.get("/{experiment_id}/code/{run_number}")
-async def get_experiment_code_run(
-    experiment_id: str, run_number: int, request: Request
-) -> dict:
+async def get_experiment_code_run(experiment_id: str, run_number: int, request: Request) -> dict:
     """Get a specific code run — returns the code, metadata, and execution result."""
     lab = _get_lab(request)
     exp = await lab.experiment_store.load(experiment_id)

@@ -73,6 +73,7 @@ class AgentOrchestrator:
             tool_hints=tool_hints or [],
         )
         self._run = run
+        await self.lab.run_store.save(run)
 
         # Load domain context if available
         domain: Domain | None = None
@@ -119,37 +120,51 @@ class AgentOrchestrator:
     async def execute(self, run: AgentRun) -> None:
         """Execute the agent run (blocking). Call in a background task.
 
-        Consumes the event stream from the backend and appends
-        events to run.events. Updates run status on completion.
+        Consumes the event stream from the backend and appends events to
+        run.events. Writes through to run_store every _PERSIST_EVERY events
+        and on every status change so other processes can observe progress.
         """
+        _PERSIST_EVERY = 10
+        _event_count = 0
+
         try:
             async for event in self.backend.execute(run.prompt):
                 run.events.append(event)
+                _event_count += 1
 
                 # Handle the result event
                 if event.event_type == "result":
                     result = _result_from_event(event)
-                    # Always capture the result data (even if stopped) for
-                    # accurate turns/cost, but only transition status if still running
                     run.result = result
                     if run.status == RunStatus.RUNNING:
                         run.status = (
                             RunStatus.FAILED if event.data.get("is_error") else RunStatus.COMPLETED
                         )
+                    await self.lab.run_store.save(run)
+                    _event_count = 0
 
                 # Handle error events
-                if event.event_type == "error" and run.status == RunStatus.RUNNING:
+                elif event.event_type == "error" and run.status == RunStatus.RUNNING:
                     run.status = RunStatus.FAILED
                     run.error = event.data.get("error", "Unknown error")
+                    await self.lab.run_store.save(run)
+                    _event_count = 0
+
+                # Periodic write-through (cross-process visibility)
+                elif _event_count >= _PERSIST_EVERY:
+                    await self.lab.run_store.save(run)
+                    _event_count = 0
 
             if run.status == RunStatus.RUNNING:
                 run.status = RunStatus.COMPLETED
             run.completed_at = datetime.now(UTC)
+            await self.lab.run_store.save(run)
 
         except Exception as e:
             run.status = RunStatus.FAILED
             run.error = str(e)
             run.completed_at = datetime.now(UTC)
+            await self.lab.run_store.save(run)
             logger.error("agent_run_failed", run_id=run.id, error=str(e))
 
     async def stop(self) -> None:
@@ -160,9 +175,7 @@ class AgentOrchestrator:
             self._run.completed_at = datetime.now(UTC)
             # Build a partial result from events collected so far
             if not self._run.result:
-                tool_calls = sum(
-                    1 for e in self._run.events if e.event_type == "tool_call"
-                )
+                tool_calls = sum(1 for e in self._run.events if e.event_type == "tool_call")
                 self._run.result = AgentRunResult(
                     session_id=None,
                     num_turns=tool_calls,

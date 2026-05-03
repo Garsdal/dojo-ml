@@ -12,6 +12,7 @@ from dojo.interfaces.experiment_store import ExperimentStore
 from dojo.interfaces.knowledge_link_store import KnowledgeLinkStore
 from dojo.interfaces.knowledge_linker import KnowledgeLinker
 from dojo.interfaces.memory_store import MemoryStore
+from dojo.interfaces.run_store import RunStore
 from dojo.interfaces.sandbox import Sandbox
 from dojo.interfaces.tracking import TrackingConnector
 
@@ -29,4 +30,5 @@ class LabEnvironment:
     domain_store: DomainStore
     knowledge_link_store: KnowledgeLinkStore
     knowledge_linker: KnowledgeLinker
+    run_store: RunStore
     settings: Any | None = field(default=None)

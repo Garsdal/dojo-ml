@@ -14,6 +14,7 @@ from dojo.storage.local import (
     LocalDomainStore,
     LocalExperimentStore,
     LocalKnowledgeLinkStore,
+    LocalRunStore,
 )
 from dojo.utils.logging import get_logger
 
@@ -93,5 +94,6 @@ def build_lab(settings: Settings) -> LabEnvironment:
         domain_store=LocalDomainStore(base_dir=base / "domains"),
         knowledge_link_store=knowledge_link_store,
         knowledge_linker=KeywordKnowledgeLinker(memory_store, knowledge_link_store),
+        run_store=LocalRunStore(base_dir=base / "runs"),
         settings=settings,
     )

@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from dojo.core.domain import Domain, DomainStatus, DomainTool, ToolType, Workspace, WorkspaceSource
+from dojo.core.task import Direction, Task, TaskType
 from dojo.interfaces.domain_store import DomainStore
 from dojo.utils.serialization import to_json
 
@@ -81,12 +82,37 @@ class LocalDomainStore(DomainStore):
         )
 
     @staticmethod
+    def _task_from_dict(data: dict[str, Any]) -> Task:
+        tools = [LocalDomainStore._tool_from_dict(t) for t in data.get("tools", [])]
+        return Task(
+            id=data["id"],
+            type=TaskType(data.get("type", "regression")),
+            name=data.get("name", ""),
+            description=data.get("description", ""),
+            primary_metric=data.get("primary_metric", "rmse"),
+            direction=Direction(data.get("direction", "minimize")),
+            tools=tools,
+            config=data.get("config", {}),
+            frozen=data.get("frozen", False),
+            created_at=datetime.fromisoformat(data["created_at"])
+            if "created_at" in data
+            else datetime.now(),
+            updated_at=datetime.fromisoformat(data["updated_at"])
+            if "updated_at" in data
+            else datetime.now(),
+        )
+
+    @staticmethod
     def _from_dict(data: dict[str, Any]) -> Domain:
         tools = [LocalDomainStore._tool_from_dict(t) for t in data.get("tools", [])]
 
         workspace = None
         if data.get("workspace"):
             workspace = LocalDomainStore._workspace_from_dict(data["workspace"])
+
+        task = None
+        if data.get("task"):
+            task = LocalDomainStore._task_from_dict(data["task"])
 
         return Domain(
             id=data["id"],
@@ -105,4 +131,6 @@ class LocalDomainStore(DomainStore):
             if "updated_at" in data
             else datetime.now(),
             workspace=workspace,
+            task=task,
+            program_path=data.get("program_path"),
         )

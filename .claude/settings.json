@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git -C /Users/marcusgarsdal/Personal/Dojo log --oneline -30)"
+    ],
+    "additionalDirectories": [
+      "/Users/marcusgarsdal/Personal/Dojo/docs"
+    ]
+  }
+}

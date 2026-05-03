@@ -25,9 +25,7 @@ def create_domain_tools(lab: LabEnvironment, domain: Domain) -> list[ToolDef]:
         List of ToolDef entries ready for registration.
     """
     return [
-        _make_tool_def(lab, tool, domain)
-        for tool in domain.tools
-        if tool.executable and tool.code
+        _make_tool_def(lab, tool, domain) for tool in domain.tools if tool.executable and tool.code
     ]
 
 
@@ -105,7 +103,7 @@ def _build_tool_script(code: str, args: dict[str, Any]) -> str:
         import sys as _sys
 
         # Inject tool arguments as local variables
-        _args = _json.loads({repr(args_json)})
+        _args = _json.loads({args_json!r})
         for _k, _v in _args.items():
             locals()[_k] = _v
 

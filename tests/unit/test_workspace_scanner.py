@@ -135,9 +135,7 @@ def test_scanner_function_suggestion_tool_type(tmp_workspace: Path):
 def test_scanner_evaluator_function_tool_type(tmp_path: Path):
     """Functions with evaluator keywords get tool_type='evaluator'."""
     (tmp_path / "metrics.py").write_text(
-        "def score_model(y_true, y_pred):\n"
-        '    """Score a model."""\n'
-        "    return 0.9\n"
+        'def score_model(y_true, y_pred):\n    """Score a model."""\n    return 0.9\n'
     )
     scanner = WorkspaceScanner()
     suggestions = scanner.scan(str(tmp_path))

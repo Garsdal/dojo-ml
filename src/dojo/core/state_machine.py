@@ -1,9 +1,9 @@
 """Experiment state machine with valid transitions."""
 
-from enum import Enum
+from enum import StrEnum
 
 
-class ExperimentState(str, Enum):
+class ExperimentState(StrEnum):
     """States an experiment can be in."""
 
     PENDING = "pending"

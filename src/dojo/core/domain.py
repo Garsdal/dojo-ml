@@ -1,11 +1,16 @@
 """Domain model — top-level organizational unit for ML research."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from dojo.utils.ids import generate_id
+
+if TYPE_CHECKING:
+    from dojo.core.task import Task
 
 
 class DomainStatus(StrEnum):
@@ -97,3 +102,5 @@ class Domain:
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     workspace: Workspace | None = None
+    task: Task | None = None
+    program_path: str | None = None

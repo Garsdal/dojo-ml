@@ -86,7 +86,7 @@ class WorkspaceService:
                 stderr=asyncio.subprocess.PIPE,
                 cwd=str(ws_path),
             )
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=15.0)
+            _, stderr = await asyncio.wait_for(proc.communicate(), timeout=15.0)
             if proc.returncode != 0:
                 errors.append(f"Python check failed: {stderr.decode()}")
         except (TimeoutError, FileNotFoundError) as e:
@@ -145,7 +145,9 @@ class WorkspaceService:
 
         if ref:
             checkout = await asyncio.create_subprocess_exec(
-                "git", "checkout", ref,
+                "git",
+                "checkout",
+                ref,
                 cwd=str(target),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
@@ -187,7 +189,8 @@ class WorkspaceService:
         # Try uv first (much faster)
         if shutil.which("uv"):
             proc = await asyncio.create_subprocess_exec(
-                "uv", "sync",
+                "uv",
+                "sync",
                 cwd=str(ws_path),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
@@ -206,7 +209,12 @@ class WorkspaceService:
         await self._create_venv(venv_path)
         python = self._venv_python(venv_path)
         proc = await asyncio.create_subprocess_exec(
-            python, "-m", "pip", "install", "-e", ".",
+            python,
+            "-m",
+            "pip",
+            "install",
+            "-e",
+            ".",
             cwd=str(ws_path),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -220,7 +228,12 @@ class WorkspaceService:
         await self._create_venv(venv_path)
         python = self._venv_python(venv_path)
         proc = await asyncio.create_subprocess_exec(
-            python, "-m", "pip", "install", "-r", "requirements.txt",
+            python,
+            "-m",
+            "pip",
+            "install",
+            "-r",
+            "requirements.txt",
             cwd=str(ws_path),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -231,7 +244,10 @@ class WorkspaceService:
     async def _create_venv(self, venv_path: Path) -> None:
         """Create a virtual environment."""
         proc = await asyncio.create_subprocess_exec(
-            sys.executable, "-m", "venv", str(venv_path),
+            sys.executable,
+            "-m",
+            "venv",
+            str(venv_path),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -255,7 +271,9 @@ class WorkspaceService:
     async def _run_setup_script(self, ws_path: Path, script: str) -> None:
         """Run a user-provided setup script in the workspace."""
         proc = await asyncio.create_subprocess_exec(
-            "bash", "-c", script,
+            "bash",
+            "-c",
+            script,
             cwd=str(ws_path),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,

@@ -6,8 +6,10 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from dojo.core.domain import Domain, DomainStatus, DomainTool, ToolType
+from dojo.core.task import Task, TaskType
 from dojo.runtime.domain_service import DomainService
 from dojo.runtime.lab import LabEnvironment
+from dojo.runtime.task_service import TaskFrozenError, TaskService
 from dojo.tools.tool_generation import (
     build_tool_generation_prompt,
     parse_generated_tools,
@@ -354,8 +356,8 @@ async def setup_workspace(domain_id: str, request: Request) -> dict:
     Resolves the workspace path, creates a virtual environment,
     and installs dependencies. Returns 202 and runs setup synchronously.
     """
-    from dojo.runtime.workspace_service import WorkspaceService
     from dojo.config.settings import Settings
+    from dojo.runtime.workspace_service import WorkspaceService
 
     lab = _get_lab(request)
     service = DomainService(lab)
@@ -379,8 +381,8 @@ async def setup_workspace(domain_id: str, request: Request) -> dict:
 @router.get("/{domain_id}/workspace/status")
 async def workspace_status(domain_id: str, request: Request) -> dict:
     """Get workspace setup status for a domain."""
-    from dojo.runtime.workspace_service import WorkspaceService
     from dojo.config.settings import Settings
+    from dojo.runtime.workspace_service import WorkspaceService
 
     lab = _get_lab(request)
     service = DomainService(lab)
@@ -399,8 +401,8 @@ async def workspace_status(domain_id: str, request: Request) -> dict:
 @router.post("/{domain_id}/workspace/validate")
 async def validate_workspace(domain_id: str, request: Request) -> dict:
     """Validate that the workspace is functional."""
-    from dojo.runtime.workspace_service import WorkspaceService
     from dojo.config.settings import Settings
+    from dojo.runtime.workspace_service import WorkspaceService
 
     lab = _get_lab(request)
     service = DomainService(lab)
@@ -530,3 +532,134 @@ async def generate_tools(
         prompt_used=prompt,
         raw_output=raw_output,
     )
+
+
+# --- Task management ---
+
+
+class CreateTaskRequest(BaseModel):
+    type: str = "regression"
+    name: str = ""
+    description: str = ""
+    config: dict[str, Any] = {}
+
+
+class UpdateTaskConfigRequest(BaseModel):
+    config: dict[str, Any]
+
+
+class TaskResponse(BaseModel):
+    id: str
+    type: str
+    name: str
+    description: str
+    primary_metric: str
+    direction: str
+    tools: list[DomainToolResponse]
+    config: dict[str, Any]
+    frozen: bool
+    created_at: str
+    updated_at: str
+
+
+def _task_response(task: Task) -> TaskResponse:
+    return TaskResponse(
+        id=task.id,
+        type=task.type.value,
+        name=task.name,
+        description=task.description,
+        primary_metric=task.primary_metric,
+        direction=task.direction.value,
+        tools=[_tool_response(t) for t in task.tools],
+        config=task.config,
+        frozen=task.frozen,
+        created_at=task.created_at.isoformat(),
+        updated_at=task.updated_at.isoformat(),
+    )
+
+
+@router.post("/{domain_id}/task", response_model=TaskResponse, status_code=201)
+async def create_task(domain_id: str, body: CreateTaskRequest, request: Request) -> TaskResponse:
+    """Create a Task on a domain (only one Task per Domain)."""
+    lab = _get_lab(request)
+    try:
+        task_type = TaskType(body.type)
+    except ValueError as exc:
+        raise HTTPException(
+            400, f"Unknown task type: {body.type!r}. Supported: regression"
+        ) from exc
+    svc = TaskService(lab)
+    try:
+        task = await svc.create(
+            domain_id,
+            task_type=task_type,
+            name=body.name,
+            description=body.description,
+            config=body.config or None,
+        )
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return _task_response(task)
+
+
+@router.get("/{domain_id}/task", response_model=TaskResponse)
+async def get_task(domain_id: str, request: Request) -> TaskResponse:
+    """Get the Task for a domain."""
+    lab = _get_lab(request)
+    task = await TaskService(lab).get(domain_id)
+    if task is None:
+        raise HTTPException(404, "No task configured for this domain")
+    return _task_response(task)
+
+
+@router.put("/{domain_id}/task/config", response_model=TaskResponse)
+async def update_task_config(
+    domain_id: str, body: UpdateTaskConfigRequest, request: Request
+) -> TaskResponse:
+    """Update task config fields (only allowed when task is not frozen)."""
+    lab = _get_lab(request)
+    try:
+        task = await TaskService(lab).update_config(domain_id, body.config)
+    except TaskFrozenError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return _task_response(task)
+
+
+@router.post("/{domain_id}/task/freeze", response_model=TaskResponse)
+async def freeze_task(domain_id: str, request: Request) -> TaskResponse:
+    """Freeze the task — required before any agent run can start."""
+    lab = _get_lab(request)
+    try:
+        task = await TaskService(lab).freeze(domain_id)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return _task_response(task)
+
+
+@router.post("/{domain_id}/task/unfreeze", response_model=TaskResponse)
+async def unfreeze_task(domain_id: str, request: Request) -> TaskResponse:
+    """Unfreeze the task to allow tool changes.
+
+    Warning: if tool code changes after experiments have already run, those
+    prior metrics may no longer be comparable to new ones.
+    """
+    lab = _get_lab(request)
+    try:
+        task = await TaskService(lab).unfreeze(domain_id)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return _task_response(task)
+
+
+@router.delete("/{domain_id}/task", status_code=204)
+async def delete_task(domain_id: str, request: Request) -> None:
+    """Remove the task from a domain (only allowed when not frozen)."""
+    lab = _get_lab(request)
+    try:
+        await TaskService(lab).delete(domain_id)
+    except TaskFrozenError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc

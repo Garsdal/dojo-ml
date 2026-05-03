@@ -2,8 +2,6 @@
 
 from pathlib import Path
 
-import pytest
-
 from dojo.core.domain import Domain, DomainTool, Workspace, WorkspaceSource
 from dojo.tools.domain_tools import _build_tool_script, create_domain_tools
 
@@ -71,9 +69,7 @@ async def test_executable_tool_uses_workspace(lab, tmp_path: Path):
     (tmp_path / "data.txt").write_text("hello from workspace")
     domain = Domain(
         name="Test",
-        workspace=Workspace(
-            source=WorkspaceSource.LOCAL, path=str(tmp_path), ready=True
-        ),
+        workspace=Workspace(source=WorkspaceSource.LOCAL, path=str(tmp_path), ready=True),
         tools=[
             DomainTool(
                 name="read_data",

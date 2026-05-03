@@ -2,8 +2,6 @@
 
 from pathlib import Path
 
-import pytest
-
 from dojo.core.domain import Domain, DomainTool, Workspace, WorkspaceSource
 from dojo.storage.local import LocalDomainStore
 
@@ -187,9 +185,7 @@ async def test_domain_with_workspace_update(tmp_path: Path):
     await store.save(domain)
 
     # Update the workspace to ready=True with a new path
-    domain.workspace = Workspace(
-        source=WorkspaceSource.LOCAL, path="/new", ready=True
-    )
+    domain.workspace = Workspace(source=WorkspaceSource.LOCAL, path="/new", ready=True)
     await store.update(domain)
 
     loaded = await store.load(domain.id)

@@ -3,7 +3,6 @@
 import pytest
 
 from dojo.core.experiment import Experiment, Hypothesis
-from dojo.core.state_machine import ExperimentState
 from dojo.runtime.experiment_service import ExperimentService
 from dojo.tools.experiments import create_experiment_tools
 
@@ -26,11 +25,13 @@ async def test_run_experiment_code_success(lab, running_experiment):
     tools = {t.name: t for t in create_experiment_tools(lab)}
     tool = tools["run_experiment_code"]
 
-    result = await tool.handler({
-        "experiment_id": running_experiment,
-        "code": "print('hello from run_experiment_code')",
-        "description": "Basic print test",
-    })
+    result = await tool.handler(
+        {
+            "experiment_id": running_experiment,
+            "code": "print('hello from run_experiment_code')",
+            "description": "Basic print test",
+        }
+    )
 
     assert result.error is None
     assert result.data["exit_code"] == 0
@@ -44,11 +45,13 @@ async def test_run_experiment_code_stores_artifact(lab, running_experiment):
     tool = tools["run_experiment_code"]
 
     code = "x = 42\nprint(x)"
-    await tool.handler({
-        "experiment_id": running_experiment,
-        "code": code,
-        "description": "Store artifact test",
-    })
+    await tool.handler(
+        {
+            "experiment_id": running_experiment,
+            "code": code,
+            "description": "Store artifact test",
+        }
+    )
 
     # Check artifact was stored
     artifact_path = f"experiments/{running_experiment}/run_1.py"
@@ -62,11 +65,13 @@ async def test_run_experiment_code_tracks_code_run(lab, running_experiment):
     tools = {t.name: t for t in create_experiment_tools(lab)}
     tool = tools["run_experiment_code"]
 
-    await tool.handler({
-        "experiment_id": running_experiment,
-        "code": "print('test')",
-        "description": "Track code run",
-    })
+    await tool.handler(
+        {
+            "experiment_id": running_experiment,
+            "code": "print('test')",
+            "description": "Track code run",
+        }
+    )
 
     exp = await lab.experiment_store.load(running_experiment)
     assert exp.result is not None
@@ -102,10 +107,12 @@ async def test_run_experiment_code_not_running(lab):
     # Don't call service.run() — experiment stays PENDING
 
     tools = {t.name: t for t in create_experiment_tools(lab)}
-    result = await tools["run_experiment_code"].handler({
-        "experiment_id": exp_id,
-        "code": "print('should not run')",
-    })
+    result = await tools["run_experiment_code"].handler(
+        {
+            "experiment_id": exp_id,
+            "code": "print('should not run')",
+        }
+    )
 
     assert result.error is not None
     assert "not in RUNNING state" in result.error
@@ -114,10 +121,12 @@ async def test_run_experiment_code_not_running(lab):
 async def test_run_experiment_code_not_found(lab):
     """run_experiment_code fails gracefully for unknown experiment."""
     tools = {t.name: t for t in create_experiment_tools(lab)}
-    result = await tools["run_experiment_code"].handler({
-        "experiment_id": "nonexistent-id",
-        "code": "print('x')",
-    })
+    result = await tools["run_experiment_code"].handler(
+        {
+            "experiment_id": "nonexistent-id",
+            "code": "print('x')",
+        }
+    )
     assert result.error is not None
 
 
@@ -126,17 +135,20 @@ async def test_run_experiment_code_stores_meta_artifact(lab, running_experiment)
     tools = {t.name: t for t in create_experiment_tools(lab)}
     tool = tools["run_experiment_code"]
 
-    await tool.handler({
-        "experiment_id": running_experiment,
-        "code": "print('meta test')",
-        "description": "Meta artifact check",
-    })
+    await tool.handler(
+        {
+            "experiment_id": running_experiment,
+            "code": "print('meta test')",
+            "description": "Meta artifact check",
+        }
+    )
 
     meta_path = f"experiments/{running_experiment}/run_1_meta.json"
     stored = await lab.artifact_store.load(meta_path)
     assert stored is not None
 
     import json
+
     meta = json.loads(stored.decode())
     assert meta["run_number"] == 1
     assert meta["exit_code"] == 0
@@ -148,10 +160,12 @@ async def test_run_experiment_code_returns_code_path(lab, running_experiment):
     tools = {t.name: t for t in create_experiment_tools(lab)}
     tool = tools["run_experiment_code"]
 
-    result = await tool.handler({
-        "experiment_id": running_experiment,
-        "code": "pass",
-    })
+    result = await tool.handler(
+        {
+            "experiment_id": running_experiment,
+            "code": "pass",
+        }
+    )
 
     assert result.error is None
     assert result.data["code_path"] == f"experiments/{running_experiment}/run_1.py"
@@ -162,11 +176,13 @@ async def test_run_experiment_code_code_run_path_matches_artifact(lab, running_e
     tools = {t.name: t for t in create_experiment_tools(lab)}
     tool = tools["run_experiment_code"]
 
-    await tool.handler({
-        "experiment_id": running_experiment,
-        "code": "x = 1",
-        "description": "path consistency",
-    })
+    await tool.handler(
+        {
+            "experiment_id": running_experiment,
+            "code": "x = 1",
+            "description": "path consistency",
+        }
+    )
 
     exp = await lab.experiment_store.load(running_experiment)
     cr = exp.result.code_runs[0]
