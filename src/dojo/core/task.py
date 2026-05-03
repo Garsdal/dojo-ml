@@ -105,6 +105,9 @@ Domain: {domain_name}
 ## How to read this
 - The PROGRAM.md block above is the user's spec — it tells you where the data
   lives and what the target is, in plain English. Trust it.
+- The PROGRAM.md may contain a `## Dataset` section (steers `load_data`) and an
+  `## Evaluate` section (steers what's *inside* `evaluate`, but never its
+  signature). Read both before writing each module.
 - For sklearn-bundled datasets (e.g. fetch_california_housing, load_diabetes),
   the user typically points you at the loader function — there is NO csv path
   and NO column name. Use the loader directly:
@@ -113,6 +116,10 @@ Domain: {domain_name}
 - For local CSVs, use the data_path / target_column hints if PROGRAM.md
   doesn't give you better info.
 - For URLs, download via pandas/requests (the workspace has internet).
+- If the user's `## Dataset` describes an expensive fetch, **cache the result
+  to disk** (e.g. `Path("cache") / dataset_name / "X.parquet"`) inside
+  `load_data` so subsequent calls are fast. The verifier reuses the same
+  module directory across runs, so the cache persists.
 
 ## Output: exactly two Python modules
 

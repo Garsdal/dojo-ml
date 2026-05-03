@@ -575,10 +575,23 @@ async def generate_tools(
 
     tools = dicts_to_domain_tools(tool_dicts)
 
-    # Verify against the Task's contract (if any) — populates tool.verification
+    # Verify against the Task's contract (if any) — populates tool.verification.
+    # We write modules to `.dojo/domains/{id}/sources/` first so the verifier
+    # imports from a stable dir; cache files written by `load_data` persist
+    # across calls instead of being thrown away with a tempdir.
     if domain.task is not None:
+        sources_dir = TaskService(lab).sources_dir(domain.id)
+        sources_dir.mkdir(parents=True, exist_ok=True)
+        for tool in tools:
+            if tool.module_filename and tool.code:
+                (sources_dir / tool.module_filename).write_text(tool.code)
         await verify_required_tools(
-            tools, domain.task, sandbox=lab.sandbox, workspace=domain.workspace
+            tools,
+            domain.task,
+            sandbox=lab.sandbox,
+            workspace=domain.workspace,
+            timeout=lab.settings.sandbox.verification_timeout,
+            module_dir=sources_dir,
         )
 
     # Phase 4: tools live on the task only.

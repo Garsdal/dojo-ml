@@ -67,9 +67,11 @@ def initialized_dir(cli_dir: Path) -> Path:
 def test_init_non_interactive_creates_domain_task_program(initialized_dir: Path):
     state = (initialized_dir / ".dojo" / "state.yaml").read_text()
     assert "current_domain_id:" in state
-    # PROGRAM.md was scaffolded next to the workspace with the new structure
-    program = list(initialized_dir.glob("ws/PROGRAM.md"))
+    # PROGRAM.md is scaffolded under .dojo/domains/{id}/ — keeps the user's
+    # repo clean, regardless of whether a workspace is set.
+    program = list(initialized_dir.glob(".dojo/domains/*/PROGRAM.md"))
     assert len(program) == 1
+    assert not (initialized_dir / "ws" / "PROGRAM.md").exists()
     body = program[0].read_text()
     assert "housing" in body
     assert "regression" in body
@@ -77,6 +79,7 @@ def test_init_non_interactive_creates_domain_task_program(initialized_dir: Path)
     assert "## Dataset" in body
     assert "## Target" in body
     assert "## Success" in body
+    assert "## Evaluate" in body
 
 
 def test_init_works_without_data_path_or_target_column(cli_dir: Path):

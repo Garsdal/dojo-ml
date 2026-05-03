@@ -19,14 +19,17 @@ def test_resolve_uses_program_path_when_set(tmp_path: Path):
     assert resolve_program_path(domain, base_dir=tmp_path) == custom
 
 
-def test_resolve_falls_back_to_workspace_path(tmp_path: Path):
+def test_resolve_ignores_workspace_path(tmp_path: Path):
+    """Workspace.path no longer steers PROGRAM.md location — it always lives
+    under the dojo storage base so we don't pollute the user's repo."""
     ws_dir = tmp_path / "ws"
     ws_dir.mkdir()
     domain = Domain(
         name="d",
         workspace=Workspace(source=WorkspaceSource.LOCAL, path=str(ws_dir)),
     )
-    assert resolve_program_path(domain, base_dir=tmp_path) == ws_dir / "PROGRAM.md"
+    expected = tmp_path / "domains" / domain.id / "PROGRAM.md"
+    assert resolve_program_path(domain, base_dir=tmp_path) == expected
 
 
 def test_resolve_falls_back_to_domain_local(tmp_path: Path):

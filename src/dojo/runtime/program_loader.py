@@ -1,13 +1,12 @@
 """PROGRAM.md loader — Karpathy-style human-editable steering prompt.
 
-A `PROGRAM.md` file lives next to the workspace (or under the domain's local
-state) and acts as the agent's steering prompt. Editing the file between runs
-is the lightest possible feedback loop — no API call, no UI.
+A `PROGRAM.md` file lives under the domain's local state and acts as the
+agent's steering prompt. Editing the file between runs is the lightest
+possible feedback loop — no API call, no UI.
 
 Resolution order for a domain's program path:
 1. `domain.program_path` if set (explicit override)
-2. `<workspace.path>/PROGRAM.md` if a workspace path is set
-3. `<base_dir>/domains/{id}/PROGRAM.md` (domain-local fallback)
+2. `<base_dir>/domains/{id}/PROGRAM.md` (default — keeps the user's repo clean)
 
 At agent run start, the orchestrator reads the file (if present) and uses its
 content as the steering prompt. Falls back to `domain.prompt` if the file is
@@ -29,8 +28,6 @@ def resolve_program_path(domain: Domain, *, base_dir: Path | None = None) -> Pat
     """
     if domain.program_path:
         return Path(domain.program_path).expanduser()
-    if domain.workspace and domain.workspace.path:
-        return Path(domain.workspace.path) / "PROGRAM.md"
     base = Path(base_dir) if base_dir is not None else Path(".dojo")
     return base / "domains" / domain.id / "PROGRAM.md"
 
@@ -106,6 +103,22 @@ How do you know the agent did well? RMSE under some threshold, beating a
 linear baseline, etc. The agent reads this and uses it to plan experiments.
 -->
 TODO — describe what success looks like.
+
+## Evaluate
+<!--
+How should `evaluate(y_pred)` compute its metrics? The signature is fixed by
+the contract below — `def evaluate(y_pred)` returning `{{"rmse", "r2", "mae"}}`
+— but you can steer what's *inside* it. A few examples:
+
+- "Use sklearn's mean_squared_error / r2_score / mean_absolute_error against
+  the y_test produced by load_data()."
+- "Wrap our existing evaluator: `from mypkg.evaluation import evaluate as
+  _impl; metrics = _impl(y_test, y_pred)` and return its dict."
+- "Weight errors by sample_weight from load_data()'s test split."
+
+Leave blank for the default (sklearn-style metrics on the full y_test).
+-->
+TODO — describe how evaluation should work, or leave blank for the default.
 
 ## Contract (do not edit — generated tools are pinned to this)
 - The agent owns `train()` and any model / hyperparameter logic, called via

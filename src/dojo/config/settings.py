@@ -28,6 +28,11 @@ class SandboxSettings(BaseSettings):
     # / boosted-tree fits on tabular data while still bounding runaway agent
     # code. Override via DOJO_SANDBOX__TIMEOUT or .dojo/config.yaml.
     timeout: float = 300.0
+    # One-off cap for `dojo task setup` verification. Set high because the
+    # first call to `load_data` may have to fetch+cache real datasets (parquet,
+    # web downloads, etc.); subsequent verifications hit the cache. Override
+    # per invocation with `dojo task setup --timeout`.
+    verification_timeout: float = 600.0
 
 
 class StorageSettings(BaseSettings):

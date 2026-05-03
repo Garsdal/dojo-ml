@@ -210,19 +210,32 @@ class TaskService:
 
     def canonical_tools_dir(self, domain_id: str) -> Path:
         """Return ``<storage_base>/domains/{id}/tools``."""
+        return self._domain_dir(domain_id) / "tools"
+
+    def sources_dir(self, domain_id: str) -> Path:
+        """Return ``<storage_base>/domains/{id}/sources`` — editable pre-freeze
+        copies of the generated tool modules.
+
+        These are the user-facing files for `dojo task generate` / `setup` and
+        the working dir for verification (so any cache files written by
+        `load_data` persist next to the module across runs).
+        """
+        return self._domain_dir(domain_id) / "sources"
+
+    def _domain_dir(self, domain_id: str) -> Path:
         base = (
             Path(self.lab.settings.storage.base_dir)
             if self.lab.settings is not None
             else Path(".dojo")
         )
-        return base / "domains" / domain_id / "tools"
+        return base / "domains" / domain_id
 
     def _copy_tools_to_canonical(self, domain: Domain) -> dict[str, str]:
         """Copy each tool's module file to the canonical dir; return SHA-256 hashes.
 
-        Source preference: ``<workspace>/<module_filename>`` (the user-facing,
+        Source preference: ``<sources_dir>/<module_filename>`` (the user-facing,
         editable copy). Falls back to ``tool.code`` (the in-memory source from
-        generation) when the workspace copy is missing — keeps tests, in-memory
+        generation) when the sources copy is missing — keeps tests, in-memory
         flows, and forced freezes working.
         """
         if domain.task is None:
@@ -231,15 +244,13 @@ class TaskService:
         canonical_dir = self.canonical_tools_dir(domain.id)
         canonical_dir.mkdir(parents=True, exist_ok=True)
 
-        workspace_path = (
-            Path(domain.workspace.path) if domain.workspace and domain.workspace.path else None
-        )
+        sources_path = self.sources_dir(domain.id)
 
         hashes: dict[str, str] = {}
         for tool in domain.task.tools:
             if not tool.module_filename:
                 continue
-            source = _read_tool_source(tool, workspace_path)
+            source = _read_tool_source(tool, sources_path)
             if source is None:
                 continue
             target = canonical_dir / tool.module_filename
@@ -267,15 +278,16 @@ class TaskService:
         return out
 
 
-def _read_tool_source(tool: DomainTool, workspace_path: Path | None) -> str | None:
+def _read_tool_source(tool: DomainTool, sources_path: Path | None) -> str | None:
     """Pick the source bytes to copy to the canonical dir.
 
-    Workspace file wins (user-edited copy). Falls back to in-memory ``tool.code``
-    so unit tests and in-memory flows still work. Returns ``None`` when neither
-    source has bytes — caller decides whether that's fatal.
+    Sources file wins (the user-edited, pre-freeze copy under
+    ``.dojo/domains/{id}/sources/``). Falls back to in-memory ``tool.code``
+    so unit tests and in-memory flows still work. Returns ``None`` when
+    neither source has bytes — caller decides whether that's fatal.
     """
-    if workspace_path is not None:
-        candidate = workspace_path / tool.module_filename
+    if sources_path is not None:
+        candidate = sources_path / tool.module_filename
         if candidate.exists():
             return candidate.read_text()
     if tool.code:

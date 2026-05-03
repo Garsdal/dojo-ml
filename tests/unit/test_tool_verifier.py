@@ -202,10 +202,13 @@ async def test_verify_required_tools_evaluate_fails_when_load_data_fails():
     task = Task(type=TaskType.REGRESSION)
     await verify_required_tools([load, evaluate], task, sandbox=LocalSandbox(), workspace=None)
     assert load.verification is not None and not load.verification.verified
-    # No y_test → no fixture → evaluate's verification is missing-fixture
+    # When load_data fails, evaluate is *skipped* with a clear cascade message
+    # rather than the misleading "missing fixture for parameter 'y_pred'".
     assert evaluate.verification is not None
     assert not evaluate.verification.verified
-    assert any("y_pred" in e for e in evaluate.verification.errors)
+    msg = " ".join(evaluate.verification.errors).lower()
+    assert "skipped" in msg
+    assert "load_data" in msg
 
 
 async def test_evaluate_can_import_load_data():

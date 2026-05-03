@@ -26,6 +26,13 @@ from dojo.tools.tool_generation import (
     parse_generated_tools,
 )
 
+DEFAULT_VERIFICATION_TIMEOUT_HELP = (
+    "Override the per-tool verification timeout (seconds). Defaults to "
+    "settings.sandbox.verification_timeout (10 min) — bump it when "
+    "load_data has a slow first-time fetch and a smaller timeout would "
+    "trip during cache warm-up."
+)
+
 console = Console()
 app = typer.Typer(help="Manage the Task contract for the current domain")
 
@@ -91,6 +98,7 @@ def generate(
     skip_verify: bool = typer.Option(
         False, "--no-verify", help="Skip tool verification (faster, but blocks freeze)"
     ),
+    timeout: float | None = typer.Option(None, "--timeout", help=DEFAULT_VERIFICATION_TIMEOUT_HELP),
 ) -> None:
     """Generate domain tools via the configured agent backend, verify, persist.
 
@@ -101,7 +109,14 @@ def generate(
 
     async def _run() -> None:
         lab, d, _ = await _resolve(override=domain)
-        await _do_generate(lab, d, hint=hint, verify=not skip_verify, save=not skip_save)
+        await _do_generate(
+            lab,
+            d,
+            hint=hint,
+            verify=not skip_verify,
+            save=not skip_save,
+            timeout=timeout,
+        )
 
     asyncio.run(_run())
 
@@ -162,12 +177,13 @@ def setup(
         "--unsafe-skip-verify",
         help="Freeze even if verification fails (rare — accepts the risk)",
     ),
+    timeout: float | None = typer.Option(None, "--timeout", help=DEFAULT_VERIFICATION_TIMEOUT_HELP),
 ) -> None:
     """One-shot: generate tools from PROGRAM.md, verify them, freeze the task."""
 
     async def _run() -> None:
         lab, d, _ = await _resolve(override=domain)
-        await _do_generate(lab, d, hint=hint, verify=True, save=True)
+        await _do_generate(lab, d, hint=hint, verify=True, save=True, timeout=timeout)
         # Reload so freeze sees the just-saved tools
         d_after = await lab.domain_store.load(d.id)
         assert d_after is not None
@@ -186,6 +202,7 @@ async def _do_generate(
     hint: str,
     verify: bool,
     save: bool,
+    timeout: float | None = None,
 ) -> list[DomainTool]:
     """Generate (and optionally verify + persist) tools for the domain's task.
 
@@ -238,13 +255,28 @@ async def _do_generate(
     new_tools = dicts_to_domain_tools(tool_dicts)
     console.print(f"[green]generated {len(new_tools)} tools[/green]")
 
+    sources_dir = TaskService(lab).sources_dir(d.id)
+    # Pre-write so the verifier reuses the same dir across calls — relative
+    # cache paths inside `load_data` (e.g. `Path("cache") / signal`) persist.
+    if save:
+        _write_modules_to_sources(sources_dir, new_tools)
+
     if verify:
+        effective_timeout = (
+            timeout if timeout is not None else lab.settings.sandbox.verification_timeout
+        )
         with console.status(
-            "[bold]verifying tools against the regression contract...[/bold]",
+            f"[bold]verifying tools against the regression contract "
+            f"(timeout {effective_timeout:.0f}s)...[/bold]",
             spinner="dots",
         ):
             await verify_required_tools(
-                new_tools, d.task, sandbox=lab.sandbox, workspace=d.workspace
+                new_tools,
+                d.task,
+                sandbox=lab.sandbox,
+                workspace=d.workspace,
+                timeout=effective_timeout,
+                module_dir=sources_dir if save else None,
             )
 
     for t in new_tools:
@@ -258,29 +290,25 @@ async def _do_generate(
     if not save:
         return new_tools
 
-    _write_modules_to_workspace(d, new_tools)
-
     d.task.tools = new_tools
     await lab.domain_store.save(d)
     console.print(f"[green]✓[/green] saved to domain {d.id}")
     return new_tools
 
 
-def _write_modules_to_workspace(d: Domain, tools: list[DomainTool]) -> None:
-    """Write each tool's source to ``<workspace>/<module_filename>``.
+def _write_modules_to_sources(sources_dir: Path, tools: list[DomainTool]) -> None:
+    """Write each tool's source to ``<sources_dir>/<module_filename>``.
 
-    Phase 4: the workspace copy is the user-facing, editable source. ``freeze``
-    will read from here when copying to the canonical, immutable dir.
+    The sources dir lives at ``.dojo/domains/{id}/sources/`` and is the
+    user-facing, editable copy. `freeze` reads from here when copying to the
+    canonical, immutable dir; the verifier also imports from here so any
+    cache files written by ``load_data`` persist across runs.
     """
-    if d.workspace is None or not d.workspace.path:
-        return
-    workspace = Path(d.workspace.path)
-    if not workspace.exists():
-        return
+    sources_dir.mkdir(parents=True, exist_ok=True)
     for tool in tools:
         if not tool.module_filename or not tool.code:
             continue
-        target = workspace / tool.module_filename
+        target = sources_dir / tool.module_filename
         target.write_text(tool.code)
         console.print(f"  [dim]wrote[/dim] {target}")
 

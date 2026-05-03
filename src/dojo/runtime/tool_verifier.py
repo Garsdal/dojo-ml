@@ -223,13 +223,25 @@ async def verify_required_tools(
     sandbox: Sandbox,
     workspace: Workspace | None,
     timeout: float = 60.0,
+    module_dir: Path | None = None,
 ) -> list[DomainTool]:
     """Verify each required tool for `task` in dependency order.
 
-    Lays out a single tempdir with every required tool's module file, so that
+    Lays out a single directory with every required tool's module file, so that
     ``evaluate.py`` can ``from load_data import load_data`` during its own
     verification. Mutates ``tools`` in place: every tool whose name matches a
     contract gets its ``verification`` field populated.
+
+    When ``module_dir`` is given, modules are written there and the directory
+    persists across calls — useful so tools like `load_data` can cache fetched
+    datasets next to themselves and the next verification reuses the cache.
+    When omitted, a fresh tempdir is created and torn down (used by tests and
+    in-memory flows).
+
+    Cascade behaviour: if a tool fails, downstream tools that depend on its
+    output (e.g. evaluate depends on load_data) are skipped with a clear
+    "skipped because <upstream> failed" error rather than the misleading
+    "missing fixture" message.
 
     Returns the same list (for fluent use).
     """
@@ -240,35 +252,90 @@ async def verify_required_tools(
     by_name = {t.name: t for t in tools}
     verifier = ToolVerifier(sandbox, timeout=timeout)
     raw_outputs: dict[str, dict[str, Any]] = {}
+    failed_upstream: set[str] = set()
 
-    with tempfile.TemporaryDirectory(prefix="dojo_verify_") as tmp:
-        module_dir = Path(tmp)
-        # Pre-write every tool with non-empty code so cross-imports resolve.
-        for contract in spec.required_tools:
-            tool = by_name.get(contract.name)
-            if tool and tool.code:
-                filename = tool.module_filename or contract.module_filename or f"{tool.name}.py"
-                (module_dir / filename).write_text(tool.code)
-
-        for contract in spec.required_tools:
-            tool = by_name.get(contract.name)
-            if tool is None:
-                continue
-            fixtures = _build_fixtures(task.type, contract.name, raw_outputs)
-            raw: dict[str, Any] = {}
-            result = await verifier.verify(
-                tool,
-                contract,
+    if module_dir is not None:
+        module_dir.mkdir(parents=True, exist_ok=True)
+        # Resolve to absolute — the sandbox runs the verifier subprocess with
+        # ``cwd=module_dir``, and the script path it executes is relative to
+        # the parent's cwd, not the child's. A relative module_dir double-joins.
+        module_dir = module_dir.resolve()
+        await _verify_in_dir(
+            module_dir, spec, by_name, verifier, workspace, raw_outputs, failed_upstream, task
+        )
+    else:
+        with tempfile.TemporaryDirectory(prefix="dojo_verify_") as tmp:
+            await _verify_in_dir(
+                Path(tmp),
+                spec,
+                by_name,
+                verifier,
                 workspace,
-                fixtures=fixtures,
-                raw_output=raw,
-                module_dir=module_dir,
+                raw_outputs,
+                failed_upstream,
+                task,
             )
-            tool.verification = result
-            if raw:
-                raw_outputs[contract.name] = raw
 
     return tools
+
+
+async def _verify_in_dir(
+    module_dir: Path,
+    spec: Any,
+    by_name: dict[str, DomainTool],
+    verifier: ToolVerifier,
+    workspace: Workspace | None,
+    raw_outputs: dict[str, dict[str, Any]],
+    failed_upstream: set[str],
+    task: Task,
+) -> None:
+    """Run the per-contract verification loop against a fixed module directory."""
+    # Pre-write every tool with non-empty code so cross-imports resolve.
+    for contract in spec.required_tools:
+        tool = by_name.get(contract.name)
+        if tool and tool.code:
+            filename = tool.module_filename or contract.module_filename or f"{tool.name}.py"
+            (module_dir / filename).write_text(tool.code)
+
+    for contract in spec.required_tools:
+        tool = by_name.get(contract.name)
+        if tool is None:
+            continue
+
+        upstream = _upstream_dep(task.type, contract.name)
+        if upstream and upstream in failed_upstream:
+            tool.verification = VerificationResult(
+                verified=False,
+                errors=[
+                    f"verification skipped — {upstream} must verify first "
+                    f"(fix {upstream} and re-run)"
+                ],
+            )
+            failed_upstream.add(contract.name)
+            continue
+
+        fixtures = _build_fixtures(task.type, contract.name, raw_outputs)
+        raw: dict[str, Any] = {}
+        result = await verifier.verify(
+            tool,
+            contract,
+            workspace,
+            fixtures=fixtures,
+            raw_output=raw,
+            module_dir=module_dir,
+        )
+        tool.verification = result
+        if raw:
+            raw_outputs[contract.name] = raw
+        if not result.verified:
+            failed_upstream.add(contract.name)
+
+
+def _upstream_dep(task_type: TaskType, tool_name: str) -> str | None:
+    """Return the upstream tool whose output `tool_name` depends on, if any."""
+    if task_type == TaskType.REGRESSION and tool_name == "evaluate":
+        return "load_data"
+    return None
 
 
 def _build_fixtures(
