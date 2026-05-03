@@ -12,21 +12,28 @@ from dojo.tools.base import ToolDef, ToolResult
 
 
 def create_domain_tools(lab: LabEnvironment, domain: Domain) -> list[ToolDef]:
-    """Create ToolDef entries for all executable domain tools.
+    """Create ToolDef entries for all executable tools on a domain.
+
+    Source of truth (Phase 3): `domain.task.tools` when a task is set.
+    Falls back to `domain.tools` only when no task exists, for legacy
+    domains created before Phase 1.
 
     Only tools with executable=True are registered as MCP tools.
     Non-executable tools remain as text hints in the system prompt.
-
-    Args:
-        lab: The lab environment (provides sandbox access).
-        domain: The domain whose tools to register.
-
-    Returns:
-        List of ToolDef entries ready for registration.
     """
-    return [
-        _make_tool_def(lab, tool, domain) for tool in domain.tools if tool.executable and tool.code
-    ]
+    tools = _select_tools(domain)
+    return [_make_tool_def(lab, tool, domain) for tool in tools if tool.executable and tool.code]
+
+
+def _select_tools(domain: Domain) -> list[DomainTool]:
+    """Pick which tools the orchestrator should register.
+
+    Prefers `domain.task.tools` when a task is set (Phase 3 contract);
+    falls back to `domain.tools` for legacy domains without a task.
+    """
+    if domain.task is not None and domain.task.tools:
+        return list(domain.task.tools)
+    return list(domain.tools)
 
 
 def _make_tool_def(lab: LabEnvironment, tool: DomainTool, domain: Domain) -> ToolDef:
@@ -38,9 +45,30 @@ def _make_tool_def(lab: LabEnvironment, tool: DomainTool, domain: Domain) -> Too
     return ToolDef(
         name=tool.name,
         description=_build_description(tool),
-        parameters=tool.parameters or {"type": "object", "properties": {}},
+        parameters=_normalize_params(tool.parameters),
         handler=handler,
     )
+
+
+def _normalize_params(params: dict[str, Any]) -> dict[str, Any]:
+    """Wrap AI-style `{name: schema}` into MCP-style `{type:object, properties:{...}}`.
+
+    AI generators sometimes emit the parameters flat (e.g.
+    ``{"y_pred": {"type": "array"}}``). MCP needs a JSON-schema object
+    envelope. If `params` already looks like a JSON schema (has "type":
+    "object"), pass it through untouched.
+    """
+    if not params:
+        return {"type": "object", "properties": {}}
+    if params.get("type") == "object" and "properties" in params:
+        return params
+    # Flat form — wrap each entry under properties
+    return {
+        "type": "object",
+        "properties": {
+            k: v if isinstance(v, dict) else {"type": "string"} for k, v in params.items()
+        },
+    }
 
 
 def _build_description(tool: DomainTool) -> str:

@@ -15,9 +15,9 @@ from dojo.agents.types import (
     RunStatus,
     ToolHint,
 )
-from dojo.core.domain import Domain
 from dojo.runtime.lab import LabEnvironment
 from dojo.runtime.program_loader import load_program
+from dojo.runtime.task_service import TaskNotReadyError, TaskService
 from dojo.tools.server import collect_all_tools
 from dojo.utils.logging import get_logger
 
@@ -61,12 +61,28 @@ class AgentOrchestrator:
         *,
         domain_id: str,
         tool_hints: list[ToolHint] | None = None,
+        require_ready_task: bool = True,
     ) -> AgentRun:
-        """Prepare an agent run: create run state, configure backend.
+        """Prepare an agent run: validate the task contract, configure backend.
 
-        Does not start execution — call execute() separately
-        (usually in a background task).
+        Phase 3 gate: the domain must exist, have a task, the task must be
+        frozen, and every required tool must be verified. Pass
+        ``require_ready_task=False`` only for tests / debug flows that
+        intentionally bypass the gate.
+
+        Does not start execution — call execute() separately (usually in a
+        background task).
         """
+        # Load domain first so we can run the contract check before persisting
+        # any run state. Failing fast keeps disk clean.
+        domain = await self.lab.domain_store.load(domain_id)
+        if require_ready_task:
+            if domain is None:
+                raise TaskNotReadyError(
+                    f"Domain {domain_id!r} not found. Create one with `dojo init`."
+                )
+            TaskService(self.lab).assert_ready(domain_id, domain.task)
+
         run = AgentRun(
             domain_id=domain_id,
             prompt=prompt,
@@ -77,11 +93,7 @@ class AgentOrchestrator:
         self._run = run
         await self.lab.run_store.save(run)
 
-        # Load domain context if available
-        domain: Domain | None = None
         accumulated_knowledge: list[str] = []
-
-        domain = await self.lab.domain_store.load(domain_id)
 
         if domain is not None:
             atoms = await self.lab.knowledge_linker.get_domain_knowledge(domain_id)

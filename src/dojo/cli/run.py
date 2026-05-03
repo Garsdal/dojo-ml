@@ -15,6 +15,7 @@ from dojo.agents.types import AgentEvent, RunStatus
 from dojo.cli._lab import build_cli_lab
 from dojo.cli.state import CLIStateError, resolve_domain, set_current_run_id
 from dojo.runtime.program_loader import load_program
+from dojo.runtime.task_service import TaskNotReadyError
 
 console = Console()
 
@@ -84,11 +85,16 @@ async def _run_async(
 
     try:
         run_obj = await orchestrator.start(prompt=prompt, domain_id=d.id)
-    except Exception as e:
-        # Phase 3 will raise TaskNotReadyError here; for now any startup failure
-        # is treated as a user-actionable error.
-        console.print(f"[red]failed to start run:[/red] {e}")
+    except TaskNotReadyError as e:
+        console.print(f"[red]✗ task not ready:[/red] {e}")
+        console.print(
+            "\n  fix: [bold]dojo task generate[/bold] then "
+            "[bold]dojo task freeze[/bold] (or `dojo task setup` to do both)."
+        )
         raise typer.Exit(code=EXIT_TASK_NOT_READY) from e
+    except Exception as e:
+        console.print(f"[red]failed to start run:[/red] {e}")
+        raise typer.Exit(code=EXIT_SYSTEM_ERROR) from e
 
     set_current_run_id(base_dir, run_obj.id)
 

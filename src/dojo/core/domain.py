@@ -13,6 +13,22 @@ if TYPE_CHECKING:
     from dojo.core.task import Task
 
 
+@dataclass
+class VerificationResult:
+    """Outcome of running a tool against its ToolContract.
+
+    Populated by `runtime.tool_verifier.ToolVerifier` after generation.
+    Persisted with the tool — `frozen=True` is only allowed when every required
+    tool has `verification.verified is True`.
+    """
+
+    verified: bool = False
+    errors: list[str] = field(default_factory=list)
+    sample_output: dict[str, Any] = field(default_factory=dict)
+    duration_ms: float | None = None
+    verified_at: datetime | None = None
+
+
 class DomainStatus(StrEnum):
     """Possible statuses for a domain."""
 
@@ -84,6 +100,7 @@ class DomainTool:
     executable: bool = False
     code: str = ""
     return_description: str = ""
+    verification: VerificationResult | None = None
 
 
 @dataclass

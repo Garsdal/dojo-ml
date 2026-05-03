@@ -12,11 +12,15 @@ from dojo.agents.factory import create_agent_backend
 from dojo.cli._lab import build_cli_lab
 from dojo.cli.state import CLIStateError, resolve_domain
 from dojo.core.domain import Domain
-from dojo.core.task import TASK_TYPE_REGISTRY, Task, TaskType
 from dojo.runtime.lab import LabEnvironment
-from dojo.runtime.task_service import TaskFrozenError, TaskService
+from dojo.runtime.task_service import (
+    TaskFrozenError,
+    TaskService,
+    TaskVerificationError,
+)
+from dojo.runtime.tool_verifier import verify_required_tools
 from dojo.tools.tool_generation import (
-    build_tool_generation_prompt,
+    build_task_generation_prompt,
     dicts_to_domain_tools,
     parse_generated_tools,
 )
@@ -81,11 +85,15 @@ def generate(
     hint: str = typer.Option("", "--hint", help="Natural-language hint for generation"),
     domain: str | None = typer.Option(None, "--domain", "-d", help="Domain id or name"),
     skip_save: bool = typer.Option(False, "--dry-run", help="Print tools without saving them"),
+    skip_verify: bool = typer.Option(
+        False, "--no-verify", help="Skip tool verification (faster, but blocks freeze)"
+    ),
 ) -> None:
-    """Generate domain tools via the configured agent backend.
+    """Generate domain tools via the configured agent backend, verify, persist.
 
-    Phase 3 will add an automatic verify step. Today this just generates and
-    persists; freeze still requires `--unsafe-skip-verify`.
+    Each generated tool is run against its ToolContract via the sandbox.
+    Verification status is shown per tool and persisted alongside the tool —
+    `dojo task freeze` will then check it.
     """
 
     async def _run() -> None:
@@ -100,7 +108,7 @@ def generate(
             console.print("[red]error:[/red] task is frozen. Run `dojo task unfreeze` first.")
             raise typer.Exit(code=EXIT_USER_ERROR)
 
-        prompt = _build_generation_prompt(d, d.task, hint)
+        prompt = build_task_generation_prompt(d, d.task, hint)
 
         backend = create_agent_backend(lab.settings.agent.backend)
         try:
@@ -120,22 +128,25 @@ def generate(
             raise typer.Exit(code=EXIT_SYSTEM_ERROR) from e
 
         new_tools = dicts_to_domain_tools(tool_dicts)
-        # Mark code-bearing tools as executable so Phase 3 wiring picks them up.
-        for tool, td in zip(new_tools, tool_dicts, strict=True):
-            code = td.get("code") or ""
-            if isinstance(code, str) and code.strip():
-                tool.code = code
-                tool.executable = True
-
         console.print(f"[green]generated {len(new_tools)} tools[/green]")
+
+        if not skip_verify:
+            console.print("verifying tools against contract...")
+            await verify_required_tools(
+                new_tools, d.task, sandbox=lab.sandbox, workspace=d.workspace
+            )
+
         for t in new_tools:
             kind = "executable" if t.executable else "hint"
-            console.print(f"  - {t.name} [{kind}] — {t.description[:60]}")
+            mark = _verify_marker(t)
+            console.print(f"  {mark} {t.name} [{kind}] — {t.description[:60]}")
+            if t.verification and not t.verification.verified:
+                for err in t.verification.errors:
+                    console.print(f"      [red]·[/red] {err}")
 
         if skip_save:
             return
 
-        # Persist on both the task and the domain (Phase 3 collapses to task only)
         d.task.tools = new_tools
         d.tools = list(new_tools)
         await lab.domain_store.save(d)
@@ -144,16 +155,28 @@ def generate(
     asyncio.run(_run())
 
 
+def _verify_marker(tool: Domain | object) -> str:
+    """Return a colored marker for a tool's verification status."""
+    v = getattr(tool, "verification", None)
+    if v is None:
+        return "[dim]?[/dim]"
+    return "[green]✓[/green]" if v.verified else "[red]✗[/red]"
+
+
 @app.command("freeze")
 def freeze(
     domain: str | None = typer.Option(None, "--domain", "-d", help="Domain id or name"),
     unsafe_skip_verify: bool = typer.Option(
         False,
         "--unsafe-skip-verify",
-        help="Phase 3 will require verification; this flag is the explicit override",
+        help="Skip the verification gate (rare — use only when the user accepts the risk)",
     ),
 ) -> None:
-    """Freeze the current domain's task — required before agent runs are allowed."""
+    """Freeze the current domain's task — required before agent runs are allowed.
+
+    Rejects (exit 3) if any required tool isn't verified. Run
+    `dojo task generate` first, fix any failures, then freeze.
+    """
 
     async def _run() -> None:
         lab, d, _ = await _resolve(override=domain)
@@ -161,16 +184,28 @@ def freeze(
             console.print("[red]error:[/red] domain has no task")
             raise typer.Exit(code=EXIT_USER_ERROR)
 
-        if not unsafe_skip_verify:
-            # Phase 3 will run the verifier here. Until then, require explicit ack.
+        try:
+            await TaskService(lab).freeze(d.id, skip_verification=unsafe_skip_verify)
+        except TaskVerificationError as exc:
+            console.print("[red]✗ task cannot be frozen — verification gate failed:[/red]")
+            for err in exc.errors:
+                console.print(f"  · {err}")
             console.print(
-                "[yellow]warning:[/yellow] tool verification is not yet implemented "
-                "(Phase 3). Re-run with [bold]--unsafe-skip-verify[/bold] to freeze anyway."
+                "\n  fix: run `[bold]dojo task generate[/bold]` to (re)generate "
+                "and verify, then freeze."
             )
-            raise typer.Exit(code=EXIT_USER_ERROR)
+            raise typer.Exit(code=3) from exc
+        except (ValueError, TaskFrozenError) as exc:
+            console.print(f"[red]error:[/red] {exc}")
+            raise typer.Exit(code=EXIT_USER_ERROR) from exc
 
-        await TaskService(lab).freeze(d.id)
-        console.print(f"[green]✓[/green] task frozen on domain {d.name}")
+        if unsafe_skip_verify:
+            console.print(
+                f"[yellow]⚠[/yellow] task frozen on domain {d.name} "
+                "[bold]without verification[/bold] (--unsafe-skip-verify)"
+            )
+        else:
+            console.print(f"[green]✓[/green] task frozen on domain {d.name}")
 
     asyncio.run(_run())
 
@@ -215,24 +250,3 @@ def setup(
     generate(hint=hint, domain=domain, skip_save=False)
     # Then freeze
     freeze(domain=domain, unsafe_skip_verify=unsafe_skip_verify)
-
-
-# --- Internals --------------------------------------------------------------
-
-
-def _build_generation_prompt(domain: Domain, task: Task, hint: str) -> str:
-    """Build the generation prompt — registry-aware when a template exists."""
-    spec = TASK_TYPE_REGISTRY.get(task.type)
-    if spec is None or task.type != TaskType.REGRESSION:
-        return build_tool_generation_prompt(domain, hint=hint)
-
-    cfg = task.config
-    return spec.generation_prompt_template.format(
-        domain_name=domain.name,
-        domain_description=domain.description or "(no description)",
-        data_path=cfg.get("data_path", "(unset)"),
-        target_column=cfg.get("target_column", "(unset)"),
-        test_split_ratio=cfg.get("test_split_ratio", 0.2),
-        feature_columns=cfg.get("feature_columns", []),
-        hint_section=f"Additional hints from the user:\n{hint}\n" if hint else "",
-    )

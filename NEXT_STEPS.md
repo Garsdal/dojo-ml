@@ -153,24 +153,24 @@ This phase is where the *contract* becomes structurally real. Phase 2 wired up t
 
 ### 3a — Tool verification
 
-- [ ] **`src/dojo/runtime/tool_verifier.py`** — new. `async verify(tool: DomainTool, contract: ToolContract, workspace: Workspace) -> VerificationResult`. Builds sample inputs from `contract.params_schema`, executes the tool in `LocalSandbox` against the workspace, parses stdout JSON, validates against `contract.returns_schema`. Returns `{verified, errors, sample_output, duration_ms}`.
-- [ ] **Extend `DomainTool`** — add `verification: VerificationResult | None = None` field. Persist with the tool.
-- [ ] **`src/dojo/tools/tool_generation.py`** — registry-aware. The prompt template comes from `TASK_TYPE_REGISTRY[task.type].generation_prompt_template`, includes the `ToolContract` (return shape, params), the user's natural-language hint, and the `WorkspaceScanner` summary.
-- [ ] **`POST /domains/{id}/tools/generate` and `dojo task generate`** — after generation, immediately run the verifier on each tool. Persist tools with verification status. Return tools with verification details in the response / CLI output.
-- [ ] **Freeze gate** — `POST /domains/{id}/task/freeze` (and `dojo task freeze`) reject with status 422 / exit 3 if any required tool's `verification.verified` is False. Surface each error clearly.
-- [ ] **Tests** — verifier round-trip (good tool passes, bad tool fails with errors); freeze gate enforces verification; E2E from "generate → verify → freeze" on a small sample regression task.
+- [x] **`src/dojo/runtime/tool_verifier.py`** ✅ `ToolVerifier.verify(tool, contract, workspace, fixtures=None, raw_output=None)` runs the tool in `LocalSandbox`, parses stdout JSON, validates against the contract. Returns a `VerificationResult` with summarised sample output (lists truncated to a head). Plus `verify_required_tools(tools, task, sandbox, workspace)` orchestrates dependency-ordered verification — for regression it threads `y_test` from `load_data` into `evaluate`'s `y_pred` fixture.
+- [x] **`DomainTool.verification`** ✅ added; round-trips through `LocalDomainStore`.
+- [x] **`tool_generation` registry-aware** ✅ `build_task_generation_prompt(domain, task, hint)` uses `TASK_TYPE_REGISTRY[type].generation_prompt_template` for regression, falls back to the generic prompt otherwise. `dicts_to_domain_tools` now sets `executable=True` whenever the generated dict carries `code`.
+- [x] **`POST /domains/{id}/tools/generate` and `dojo task generate`** ✅ Both now persist tools onto `domain.task.tools` and run the verifier against the contract before returning. The HTTP response includes a `VerificationResultResponse` per tool. CLI prints ✓/✗ + per-tool errors. Pre-existing bug fixed: `create_agent_backend(lab.settings.agent.backend)` (was passing the whole Settings object).
+- [x] **Freeze gate** ✅ `TaskService.freeze` raises `TaskVerificationError` (HTTP 422 / CLI exit 3) when any required tool fails or is missing verification. `--unsafe-skip-verify` (CLI) and `?skip_verification=true` (HTTP) provide an explicit override that prints a "without verification" warning.
+- [x] **Tests** ✅ 11 verifier tests + 9 freeze-gate / collect-from-task / param-normalize tests + 5 task-service gate tests.
 
 ### 3b — Anti-cheating run gating
 
-- [ ] **`src/dojo/agents/orchestrator.py`** — `start()` checks: `domain.task` exists, `domain.task.frozen is True`, all required tools present + verified. If any fails, raise a clear `TaskNotReadyError` *before* the backend is configured.
-- [ ] **`src/dojo/tools/server.py`** — `collect_all_tools(lab, domain)` loads tools from `domain.task.tools` (was `domain.tools`). Only registers `executable=True` tools; non-executable hint-only tools stay as system prompt context.
-- [ ] **`src/dojo/agents/prompts.py`** — rewrite `_build_domain_section` and add `_build_task_section`. The system prompt frames the contract: agent owns training code via `run_experiment_code`; `load_data` and `evaluate` are frozen tools the agent must call but cannot modify. The metric returned by `evaluate` is the source of truth; `complete_experiment` records that metric. Include the loaded `PROGRAM.md` content as the steering prompt (per Phase 2 convention).
-- [ ] **`src/dojo/api/routers/agent.py`** — `POST /agent/run` requires `domain_id` (no fallback to `generate_id()`). Returns 422 with task status info if the domain isn't ready.
-- [ ] **`dojo run`** — surfaces the `TaskNotReadyError` cleanly: tells the user exactly which command to run (`dojo task setup` or similar). Exit code 3.
-- [ ] **`src/dojo/tools/experiments.py`** — `complete_experiment` only accepts the metrics dict shape `evaluate` returns (loose validation: keys subset of `task.config["expected_metrics"]`).
-- [ ] **Tests** — unit: orchestrator rejects runs against unfrozen / taskless / unverified-tool domains. E2E from CLI: `dojo run` against a domain with no task → exit 3 with helpful message; `dojo run` against a frozen task → run completes; metric in tracking matches what `evaluate` would return on canned predictions.
+- [x] **`orchestrator.start`** ✅ Loads the domain, calls `TaskService.assert_ready(domain_id, domain.task)` *before* persisting any run state. Raises `TaskNotReadyError` for missing/unfrozen tasks and unverified required tools. Tests bypass via `require_ready_task=False`.
+- [x] **`tools/server.py` / `domain_tools.py`** ✅ `create_domain_tools` reads from `domain.task.tools` when a task is set; falls back to `domain.tools` for legacy callers. Added `_normalize_params` so the AI's flat `{name: schema}` format is wrapped into the JSON-schema envelope MCP needs.
+- [x] **`agents/prompts.py`** ✅ Rewrote `_build_domain_section` (now goal + PROGRAM.md only) and added `_build_task_section` framing the contract: agent owns training code; `load_data` + `evaluate` are frozen MCP tools; metrics from `evaluate` are the source of truth.
+- [x] **`POST /agent/run`** ✅ `domain_id` is now required (Pydantic 422 on missing). Returns 422 with `{kind: "task_not_ready", message}` when `assert_ready` fails.
+- [x] **`dojo run`** ✅ Catches `TaskNotReadyError`, prints actionable hint (`dojo task generate` then `dojo task freeze`), exits 3. Other startup failures exit 2.
+- [x] **`complete_experiment`** ✅ Loads the experiment's domain and rejects metric keys not in `task.config["expected_metrics"]`. `expected_metrics` is auto-seeded from the registry's evaluator contract at task creation. Domains without a task are pass-through (no contract).
+- [x] **Tests** ✅ Orchestrator gate tests (4 cases — unknown domain / no task / unfrozen / unverified / ready), HTTP `POST /agent/run` gate tests (2 cases), `complete_experiment` validation (3 cases), CLI `dojo run` blocked-when-not-ready test.
 
-**Done when:** `dojo run` literally cannot start an agent unless there's a frozen, verified task. The system prompt makes the contract obvious. The recorded metric comes from the frozen evaluator.
+**Done when:** ✅ `dojo run` cannot start an agent unless the domain has a frozen task. Even `--unsafe-skip-verify` users still hit the runtime gate via `assert_ready`. The system prompt frames the contract. `complete_experiment` rejects metric keys outside the contract.
 
 ---
 
@@ -233,6 +233,6 @@ These are all reasonable later, none are right *now*.
 - [x] Phase 0 — Cleanup
 - [x] Phase 1 — Task abstraction lands in core (disk as source of truth + Task/TaskService/RunStore)
 - [x] Phase 2 — CLI happy path + PROGRAM.md convention
-- [ ] Phase 3 — Tool verification + anti-cheating run gating
+- [x] Phase 3 — Tool verification + anti-cheating run gating
 - [ ] Phase 4 — End-to-end real RegressionTask via CLI
 - [ ] Phase 5 — Reconnaissance

@@ -11,7 +11,7 @@ from dojo.agents.factory import create_agent_backend
 from dojo.agents.orchestrator import AgentOrchestrator
 from dojo.agents.types import AgentRun, RunStatus, ToolHint
 from dojo.runtime.lab import LabEnvironment
-from dojo.utils.ids import generate_id
+from dojo.runtime.task_service import TaskNotReadyError
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 
@@ -37,7 +37,7 @@ class ToolHintRequest(BaseModel):
 
 class StartRunRequest(BaseModel):
     prompt: str
-    domain_id: str | None = None
+    domain_id: str
     tool_hints: list[ToolHintRequest] = []
     max_turns: int = 50
     max_budget_usd: float | None = None
@@ -95,11 +95,17 @@ async def start_run(body: StartRunRequest, request: Request) -> AgentRunResponse
         for h in body.tool_hints
     ]
 
-    run = await orchestrator.start(
-        prompt=body.prompt,
-        domain_id=body.domain_id or generate_id(),
-        tool_hints=tool_hints,
-    )
+    try:
+        run = await orchestrator.start(
+            prompt=body.prompt,
+            domain_id=body.domain_id,
+            tool_hints=tool_hints,
+        )
+    except TaskNotReadyError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"message": str(exc), "kind": "task_not_ready"},
+        ) from exc
 
     _runs[run.id] = run
     _orchestrators[run.id] = orchestrator

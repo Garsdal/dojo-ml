@@ -112,14 +112,16 @@ def test_task_show_after_init(initialized_dir: Path):
     assert "not frozen" in result.output
 
 
-def test_task_freeze_requires_unsafe_flag(initialized_dir: Path):
+def test_task_freeze_blocked_by_verification_gate(initialized_dir: Path):
+    """Phase 3: freeze rejects (exit 3) when required tools aren't verified."""
     runner = CliRunner()
     blocked = runner.invoke(app, ["task", "freeze"])
-    assert blocked.exit_code == 1
-    assert "verification" in blocked.output
+    assert blocked.exit_code == 3
+    assert "verification gate" in blocked.output
 
     forced = runner.invoke(app, ["task", "freeze", "--unsafe-skip-verify"])
     assert forced.exit_code == 0, forced.output
+    assert "without verification" in forced.output
 
     showed = runner.invoke(app, ["task", "show"])
     assert "frozen" in showed.output and "not frozen" not in showed.output
@@ -132,9 +134,43 @@ def test_program_show_prints_scaffolded_content(initialized_dir: Path):
     assert "Steering prompt" in result.output
 
 
-def test_run_then_runs_show_in_process(initialized_dir: Path):
+def test_run_then_runs_show_in_process(initialized_dir: Path, monkeypatch: pytest.MonkeyPatch):
+    """End-to-end: prep a verified+frozen domain, run, observe."""
+    import asyncio
+
+    from dojo.cli._lab import build_cli_lab
+    from dojo.core.domain import DomainTool, ToolType, VerificationResult
+    from dojo.runtime.task_service import TaskService
+
+    # Force the lab to pick up the .dojo/ inside the test dir
+    monkeypatch.chdir(initialized_dir)
+    lab, _settings = build_cli_lab()
+
+    async def _seed_verified_tools() -> None:
+        domains = await lab.domain_store.list()
+        domain = domains[0]
+        domain.task.tools = [
+            DomainTool(
+                name="load_data",
+                type=ToolType.DATA_LOADER,
+                executable=True,
+                code="print('{}')",
+                verification=VerificationResult(verified=True),
+            ),
+            DomainTool(
+                name="evaluate",
+                type=ToolType.EVALUATOR,
+                executable=True,
+                code="print('{}')",
+                verification=VerificationResult(verified=True),
+            ),
+        ]
+        await lab.domain_store.save(domain)
+        await TaskService(lab).freeze(domain.id)
+
+    asyncio.run(_seed_verified_tools())
+
     runner = CliRunner()
-    # Stub backend doesn't require a frozen task today (Phase 3 will gate it).
     result = runner.invoke(app, ["run", "--max-turns", "5"])
     assert result.exit_code == 0, result.output
     assert "completed" in result.output
@@ -145,8 +181,16 @@ def test_run_then_runs_show_in_process(initialized_dir: Path):
 
     ls = runner.invoke(app, ["runs", "ls"])
     assert ls.exit_code == 0
-    # status column should show 'completed'
     assert "completed" in ls.output
+
+
+def test_run_blocked_when_task_not_frozen(initialized_dir: Path):
+    """Phase 3: dojo run exits 3 with an actionable message if task isn't ready."""
+    runner = CliRunner()
+    result = runner.invoke(app, ["run", "--max-turns", "5"])
+    assert result.exit_code == 3, result.output
+    assert "task not ready" in result.output
+    assert "dojo task" in result.output
 
 
 def test_runs_show_unknown_id(initialized_dir: Path):

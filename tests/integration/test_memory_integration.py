@@ -19,10 +19,15 @@ def lab(tmp_path):
 
 
 async def _run_stub(lab, prompt: str) -> None:
-    """Helper: run the stub backend through the orchestrator pipeline."""
+    """Helper: run the stub backend through the orchestrator pipeline.
+
+    The Phase 3 contract requires a frozen task with verified tools at run start.
+    These tests aren't about the gate — they test memory wiring — so we bypass
+    via `require_ready_task=False`.
+    """
     backend = StubAgentBackend()
     orchestrator = AgentOrchestrator(lab, backend)
-    run = await orchestrator.start(prompt, domain_id="test-domain")
+    run = await orchestrator.start(prompt, domain_id="test-domain", require_ready_task=False)
     await orchestrator.execute(run)
 
 

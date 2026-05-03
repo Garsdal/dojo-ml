@@ -5,7 +5,15 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from dojo.core.domain import Domain, DomainStatus, DomainTool, ToolType, Workspace, WorkspaceSource
+from dojo.core.domain import (
+    Domain,
+    DomainStatus,
+    DomainTool,
+    ToolType,
+    VerificationResult,
+    Workspace,
+    WorkspaceSource,
+)
 from dojo.core.task import Direction, Task, TaskType
 from dojo.interfaces.domain_store import DomainStore
 from dojo.utils.serialization import to_json
@@ -65,6 +73,17 @@ class LocalDomainStore(DomainStore):
 
     @staticmethod
     def _tool_from_dict(data: dict[str, Any]) -> DomainTool:
+        verification = None
+        if data.get("verification"):
+            v = data["verification"]
+            verified_at = v.get("verified_at")
+            verification = VerificationResult(
+                verified=v.get("verified", False),
+                errors=list(v.get("errors", [])),
+                sample_output=dict(v.get("sample_output", {})),
+                duration_ms=v.get("duration_ms"),
+                verified_at=datetime.fromisoformat(verified_at) if verified_at else None,
+            )
         return DomainTool(
             id=data["id"],
             name=data.get("name", ""),
@@ -79,6 +98,7 @@ class LocalDomainStore(DomainStore):
             executable=data.get("executable", False),
             code=data.get("code", ""),
             return_description=data.get("return_description", ""),
+            verification=verification,
         )
 
     @staticmethod

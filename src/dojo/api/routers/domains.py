@@ -9,9 +9,12 @@ from dojo.core.domain import Domain, DomainStatus, DomainTool, ToolType
 from dojo.core.task import Task, TaskType
 from dojo.runtime.domain_service import DomainService
 from dojo.runtime.lab import LabEnvironment
-from dojo.runtime.task_service import TaskFrozenError, TaskService
+from dojo.runtime.task_service import TaskFrozenError, TaskService, TaskVerificationError
+from dojo.runtime.tool_verifier import verify_required_tools
 from dojo.tools.tool_generation import (
+    build_task_generation_prompt,
     build_tool_generation_prompt,
+    dicts_to_domain_tools,
     parse_generated_tools,
 )
 
@@ -457,12 +460,21 @@ class GenerateToolsRequest(BaseModel):
     hint: str = ""
 
 
+class VerificationResultResponse(BaseModel):
+    verified: bool
+    errors: list[str]
+    sample_output: dict[str, Any] = {}
+    duration_ms: float | None = None
+
+
 class GeneratedToolResponse(BaseModel):
     name: str
     description: str
     type: str
     example_usage: str
     parameters: dict[str, Any]
+    executable: bool = False
+    verification: VerificationResultResponse | None = None
 
 
 class GenerateToolsResponse(BaseModel):
@@ -472,36 +484,52 @@ class GenerateToolsResponse(BaseModel):
     raw_output: str | None = None
 
 
+def _verification_response(tool: DomainTool) -> VerificationResultResponse | None:
+    if tool.verification is None:
+        return None
+    v = tool.verification
+    return VerificationResultResponse(
+        verified=v.verified,
+        errors=list(v.errors),
+        sample_output=dict(v.sample_output),
+        duration_ms=v.duration_ms,
+    )
+
+
 @router.post("/{domain_id}/tools/generate", response_model=GenerateToolsResponse)
 async def generate_tools(
     domain_id: str, body: GenerateToolsRequest, request: Request
 ) -> GenerateToolsResponse:
-    """AI-generate tool definitions for a domain.
+    """AI-generate tool definitions for a domain, verify them, and persist.
 
-    Returns the generated tools for review. They are NOT automatically
-    registered — the client should review and then POST individual tools
-    to ``/domains/{id}/tools`` to register them.
+    If the domain has a Task, generated tools land on ``domain.task.tools``
+    and each is verified against its ToolContract before the response.
+    Verification status is included so the client knows which tools are
+    ready to freeze.
     """
     lab = _get_lab(request)
     service = DomainService(lab)
     domain = await service.get(domain_id)
     if domain is None:
         raise HTTPException(status_code=404, detail="Domain not found")
+    if domain.task is not None and domain.task.frozen:
+        raise HTTPException(
+            status_code=409,
+            detail="Task is frozen — unfreeze before regenerating tools",
+        )
 
-    prompt = build_tool_generation_prompt(domain, hint=body.hint)
+    if domain.task is not None:
+        prompt = build_task_generation_prompt(domain, domain.task, hint=body.hint)
+    else:
+        prompt = build_tool_generation_prompt(domain, hint=body.hint)
 
-    # Try using the configured agent backend to generate tools
     from dojo.agents.factory import create_agent_backend
 
-    backend = create_agent_backend(lab.settings)
+    backend = create_agent_backend(lab.settings.agent.backend)
 
-    # Use the backend to get a completion
-    # For backends that support direct completion, use that.
-    # Otherwise, return the prompt for manual generation.
     try:
         raw_output = await backend.complete(prompt)
     except (AttributeError, NotImplementedError):
-        # Backend doesn't support direct completion
         return GenerateToolsResponse(
             domain_id=domain_id,
             generated=[],
@@ -517,17 +545,33 @@ async def generate_tools(
             detail=f"Failed to parse generated tools: {e}",
         ) from e
 
+    tools = dicts_to_domain_tools(tool_dicts)
+
+    # Verify against the Task's contract (if any) — populates tool.verification
+    if domain.task is not None:
+        await verify_required_tools(
+            tools, domain.task, sandbox=lab.sandbox, workspace=domain.workspace
+        )
+
+    # Persist on the task (Phase 3 source of truth) and on domain (deprecated mirror)
+    if domain.task is not None:
+        domain.task.tools = tools
+    domain.tools = list(tools)
+    await service.update(domain)
+
     return GenerateToolsResponse(
         domain_id=domain_id,
         generated=[
             GeneratedToolResponse(
-                name=t["name"],
-                description=t["description"],
-                type=t["type"],
-                example_usage=t["example_usage"],
-                parameters=t["parameters"],
+                name=t.name,
+                description=t.description,
+                type=t.type.value,
+                example_usage=t.example_usage,
+                parameters=t.parameters,
+                executable=t.executable,
+                verification=_verification_response(t),
             )
-            for t in tool_dicts
+            for t in tools
         ],
         prompt_used=prompt,
         raw_output=raw_output,
@@ -628,11 +672,25 @@ async def update_task_config(
 
 
 @router.post("/{domain_id}/task/freeze", response_model=TaskResponse)
-async def freeze_task(domain_id: str, request: Request) -> TaskResponse:
-    """Freeze the task — required before any agent run can start."""
+async def freeze_task(
+    domain_id: str,
+    request: Request,
+    skip_verification: bool = False,
+) -> TaskResponse:
+    """Freeze the task — required before any agent run can start.
+
+    Rejects with 422 if the verification gate fails. Pass
+    ``?skip_verification=true`` only when the user has explicitly opted out
+    (e.g. ``--unsafe-skip-verify`` from the CLI).
+    """
     lab = _get_lab(request)
     try:
-        task = await TaskService(lab).freeze(domain_id)
+        task = await TaskService(lab).freeze(domain_id, skip_verification=skip_verification)
+    except TaskVerificationError as exc:
+        raise HTTPException(
+            422,
+            detail={"message": str(exc), "errors": exc.errors},
+        ) from exc
     except ValueError as exc:
         raise HTTPException(404, str(exc)) from exc
     return _task_response(task)

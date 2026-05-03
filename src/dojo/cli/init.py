@@ -23,7 +23,6 @@ from rich.console import Console
 from dojo.cli._lab import build_cli_lab
 from dojo.cli.config import config_init
 from dojo.cli.state import set_current_domain_id
-from dojo.cli.task import _build_generation_prompt
 from dojo.core.domain import (
     Domain,
     DomainStatus,
@@ -33,8 +32,13 @@ from dojo.core.domain import (
 from dojo.core.task import TaskType
 from dojo.runtime.program_loader import default_program_template, write_program
 from dojo.runtime.task_service import TaskService
+from dojo.runtime.tool_verifier import verify_required_tools
 from dojo.runtime.workspace_service import WorkspaceService
-from dojo.tools.tool_generation import dicts_to_domain_tools, parse_generated_tools
+from dojo.tools.tool_generation import (
+    build_task_generation_prompt,
+    dicts_to_domain_tools,
+    parse_generated_tools,
+)
 
 console = Console()
 
@@ -259,13 +263,13 @@ def _build_workspace(arg: str) -> Workspace | None:
 
 
 async def _generate_tools(lab, domain: Domain, settings) -> None:
-    """Generate tools using the configured agent backend; persist on success."""
+    """Generate tools using the configured agent backend; verify and persist."""
     from dojo.agents.factory import create_agent_backend
 
     if domain.task is None:
         return
 
-    prompt = _build_generation_prompt(domain, domain.task, hint="")
+    prompt = build_task_generation_prompt(domain, domain.task, hint="")
     backend = create_agent_backend(settings.agent.backend)
 
     try:
@@ -291,16 +295,19 @@ async def _generate_tools(lab, domain: Domain, settings) -> None:
         return
 
     tools = dicts_to_domain_tools(tool_dicts)
-    for tool, td in zip(tools, tool_dicts, strict=True):
-        code = td.get("code") or ""
-        if isinstance(code, str) and code.strip():
-            tool.code = code
-            tool.executable = True
+
+    console.print("verifying tools against contract...")
+    await verify_required_tools(tools, domain.task, sandbox=lab.sandbox, workspace=domain.workspace)
 
     domain.task.tools = tools
     domain.tools = list(tools)
     await lab.domain_store.save(domain)
-    console.print(f"[green]✓[/green] generated {len(tools)} tools")
+
+    pass_count = sum(1 for t in tools if t.verification and t.verification.verified)
+    console.print(
+        f"[green]✓[/green] generated {len(tools)} tools "
+        f"({pass_count} verified, {len(tools) - pass_count} unverified)"
+    )
 
 
 def _patch_config(config_path: Path, *, tracking: str | None, agent_backend: str | None) -> None:

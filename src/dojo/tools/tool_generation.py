@@ -11,12 +11,37 @@ import re
 from typing import Any
 
 from dojo.core.domain import Domain, DomainTool, ToolType
+from dojo.core.task import TASK_TYPE_REGISTRY, Task, TaskType
 from dojo.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
 # Valid tool types
 _VALID_TYPES = {t.value for t in ToolType}
+
+
+def build_task_generation_prompt(domain: Domain, task: Task, hint: str = "") -> str:
+    """Registry-aware prompt builder.
+
+    For task types with a `generation_prompt_template` in `TASK_TYPE_REGISTRY`,
+    the contract-specific template is used (so generated tools match the exact
+    return shape the verifier expects). Falls back to the generic
+    `build_tool_generation_prompt` for unknown types.
+    """
+    spec = TASK_TYPE_REGISTRY.get(task.type)
+    if spec is None or task.type != TaskType.REGRESSION:
+        return build_tool_generation_prompt(domain, hint=hint)
+
+    cfg = task.config
+    return spec.generation_prompt_template.format(
+        domain_name=domain.name,
+        domain_description=domain.description or "(no description)",
+        data_path=cfg.get("data_path", "(unset)"),
+        target_column=cfg.get("target_column", "(unset)"),
+        test_split_ratio=cfg.get("test_split_ratio", 0.2),
+        feature_columns=cfg.get("feature_columns", []),
+        hint_section=f"Additional hints from the user:\n{hint}\n" if hint else "",
+    )
 
 
 def build_tool_generation_prompt(domain: Domain, hint: str = "") -> str:
@@ -143,12 +168,17 @@ def _validate_tool_dict(tool: dict[str, Any], *, index: int = 0) -> dict[str, An
     if not isinstance(parameters, dict):
         parameters = {}
 
+    code = tool.get("code", "")
+    if not isinstance(code, str):
+        code = ""
+
     return {
         "name": name,
         "description": str(description),
         "type": tool_type,
         "example_usage": example_usage,
         "parameters": parameters,
+        "code": code,
     }
 
 
@@ -157,15 +187,24 @@ def dicts_to_domain_tools(
     *,
     created_by: str = "ai",
 ) -> list[DomainTool]:
-    """Convert validated tool dicts into DomainTool instances."""
-    return [
-        DomainTool(
-            name=d["name"],
-            description=d["description"],
-            type=ToolType(d["type"]),
-            example_usage=d["example_usage"],
-            parameters=d["parameters"],
-            created_by=created_by,
+    """Convert validated tool dicts into DomainTool instances.
+
+    Tools with non-empty `code` become executable=True so the orchestrator
+    registers them as MCP tools at run-time.
+    """
+    out: list[DomainTool] = []
+    for d in tool_dicts:
+        code = (d.get("code") or "").strip()
+        out.append(
+            DomainTool(
+                name=d["name"],
+                description=d["description"],
+                type=ToolType(d["type"]),
+                example_usage=d["example_usage"],
+                parameters=d["parameters"],
+                created_by=created_by,
+                code=code,
+                executable=bool(code),
+            )
         )
-        for d in tool_dicts
-    ]
+    return out

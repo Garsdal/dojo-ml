@@ -5,6 +5,33 @@ import pytest
 from dojo.agents.backends.stub import StubAgentBackend
 from dojo.agents.orchestrator import AgentOrchestrator
 from dojo.agents.types import AgentEvent, RunStatus, ToolHint
+from dojo.core.domain import Domain, DomainTool, ToolType, VerificationResult
+from dojo.core.task import TaskType
+from dojo.runtime.task_service import TaskNotReadyError, TaskService
+
+
+def _verified(name: str) -> DomainTool:
+    return DomainTool(
+        name=name,
+        description=name,
+        type=ToolType.DATA_LOADER if name == "load_data" else ToolType.EVALUATOR,
+        executable=True,
+        code="print('{}')",
+        verification=VerificationResult(verified=True),
+    )
+
+
+async def _make_ready_domain(lab) -> Domain:
+    """Create a domain with a frozen task and verified required tools."""
+    domain = Domain(name="ready")
+    await lab.domain_store.save(domain)
+    svc = TaskService(lab)
+    await svc.create(domain.id, task_type=TaskType.REGRESSION)
+    domain = await lab.domain_store.load(domain.id)
+    domain.task.tools = [_verified("load_data"), _verified("evaluate")]
+    await lab.domain_store.save(domain)
+    await svc.freeze(domain.id)
+    return await lab.domain_store.load(domain.id)
 
 
 class TestAgentOrchestrator:
@@ -14,7 +41,9 @@ class TestAgentOrchestrator:
         backend = StubAgentBackend()
         orchestrator = AgentOrchestrator(lab, backend)
 
-        run = await orchestrator.start("test prompt", domain_id="test-domain")
+        run = await orchestrator.start(
+            "test prompt", domain_id="test-domain", require_ready_task=False
+        )
 
         assert run.status == RunStatus.RUNNING
         assert run.prompt == "test prompt"
@@ -25,7 +54,7 @@ class TestAgentOrchestrator:
         backend = StubAgentBackend()
         orchestrator = AgentOrchestrator(lab, backend)
 
-        run = await orchestrator.start("test", domain_id="custom-id")
+        run = await orchestrator.start("test", domain_id="custom-id", require_ready_task=False)
 
         assert run.domain_id == "custom-id"
 
@@ -34,7 +63,9 @@ class TestAgentOrchestrator:
         orchestrator = AgentOrchestrator(lab, backend)
 
         hints = [ToolHint(name="fetch_data", description="Load dataset", source="http://test")]
-        run = await orchestrator.start("test", domain_id="test-domain", tool_hints=hints)
+        run = await orchestrator.start(
+            "test", domain_id="test-domain", require_ready_task=False, tool_hints=hints
+        )
 
         assert len(run.tool_hints) == 1
         assert run.tool_hints[0].name == "fetch_data"
@@ -45,7 +76,9 @@ class TestAgentOrchestrator:
         backend = StubAgentBackend()
         orchestrator = AgentOrchestrator(lab, backend)
 
-        run = await orchestrator.start("test prompt", domain_id="test-domain")
+        run = await orchestrator.start(
+            "test prompt", domain_id="test-domain", require_ready_task=False
+        )
         await orchestrator.execute(run)
 
         assert run.status == RunStatus.COMPLETED
@@ -69,7 +102,7 @@ class TestAgentOrchestrator:
         backend = StubAgentBackend(events=events)
         orchestrator = AgentOrchestrator(lab, backend)
 
-        run = await orchestrator.start("test", domain_id="test-domain")
+        run = await orchestrator.start("test", domain_id="test-domain", require_ready_task=False)
         await orchestrator.execute(run)
 
         assert run.result is not None
@@ -85,7 +118,7 @@ class TestAgentOrchestrator:
         backend = StubAgentBackend(events=events)
         orchestrator = AgentOrchestrator(lab, backend)
 
-        run = await orchestrator.start("test", domain_id="test-domain")
+        run = await orchestrator.start("test", domain_id="test-domain", require_ready_task=False)
         await orchestrator.execute(run)
 
         assert run.status == RunStatus.FAILED
@@ -101,7 +134,7 @@ class TestAgentOrchestrator:
         backend = StubAgentBackend(events=events)
         orchestrator = AgentOrchestrator(lab, backend)
 
-        run = await orchestrator.start("test", domain_id="test-domain")
+        run = await orchestrator.start("test", domain_id="test-domain", require_ready_task=False)
         await orchestrator.execute(run)
 
         assert run.status == RunStatus.FAILED
@@ -110,7 +143,7 @@ class TestAgentOrchestrator:
         backend = StubAgentBackend()
         orchestrator = AgentOrchestrator(lab, backend)
 
-        run = await orchestrator.start("test", domain_id="test-domain")
+        run = await orchestrator.start("test", domain_id="test-domain", require_ready_task=False)
         await orchestrator.stop()
 
         assert run.status == RunStatus.STOPPED
@@ -127,7 +160,7 @@ class TestAgentOrchestrator:
             cwd="/tmp/test",
         )
 
-        run = await orchestrator.start("test", domain_id="test-domain")
+        run = await orchestrator.start("test", domain_id="test-domain", require_ready_task=False)
 
         assert run.config.max_turns == 10
         assert run.config.max_budget_usd == pytest.approx(1.5)
@@ -138,7 +171,7 @@ class TestAgentOrchestrator:
         backend = StubAgentBackend()
         orchestrator = AgentOrchestrator(lab, backend)
 
-        run = await orchestrator.start("test", domain_id="my-domain")
+        run = await orchestrator.start("test", domain_id="my-domain", require_ready_task=False)
 
         assert run.config.domain_id == "my-domain"
 
@@ -147,7 +180,9 @@ class TestAgentOrchestrator:
         backend = StubAgentBackend()
         orchestrator = AgentOrchestrator(lab, backend)
 
-        run = await orchestrator.start("pipeline test", domain_id="test-domain")
+        run = await orchestrator.start(
+            "pipeline test", domain_id="test-domain", require_ready_task=False
+        )
         await orchestrator.execute(run)
 
         assert run.status == RunStatus.COMPLETED
@@ -159,7 +194,9 @@ class TestAgentOrchestrator:
         backend = StubAgentBackend()
         orchestrator = AgentOrchestrator(lab, backend)
 
-        run = await orchestrator.start("event types test", domain_id="test-domain")
+        run = await orchestrator.start(
+            "event types test", domain_id="test-domain", require_ready_task=False
+        )
         await orchestrator.execute(run)
 
         event_types = [e.event_type for e in run.events]
@@ -167,3 +204,49 @@ class TestAgentOrchestrator:
         assert "tool_call" in event_types
         assert "tool_result" in event_types
         assert event_types[-1] == "result"
+
+
+class TestOrchestratorTaskGate:
+    """The Phase 3 contract: start() refuses to run unless the task is ready."""
+
+    async def test_start_rejects_unknown_domain(self, lab):
+        backend = StubAgentBackend()
+        orchestrator = AgentOrchestrator(lab, backend)
+        with pytest.raises(TaskNotReadyError, match="not found"):
+            await orchestrator.start("p", domain_id="ghost")
+
+    async def test_start_rejects_domain_without_task(self, lab):
+        domain = Domain(name="no-task")
+        await lab.domain_store.save(domain)
+        backend = StubAgentBackend()
+        orchestrator = AgentOrchestrator(lab, backend)
+        with pytest.raises(TaskNotReadyError, match="no task"):
+            await orchestrator.start("p", domain_id=domain.id)
+
+    async def test_start_rejects_unfrozen_task(self, lab):
+        domain = Domain(name="unfrozen")
+        await lab.domain_store.save(domain)
+        await TaskService(lab).create(domain.id)
+        backend = StubAgentBackend()
+        orchestrator = AgentOrchestrator(lab, backend)
+        with pytest.raises(TaskNotReadyError, match="not frozen"):
+            await orchestrator.start("p", domain_id=domain.id)
+
+    async def test_start_rejects_unverified_tools(self, lab):
+        domain = Domain(name="unverified")
+        await lab.domain_store.save(domain)
+        await TaskService(lab).create(domain.id)
+        # Force-freeze without verification (simulates --unsafe-skip-verify
+        # path) — assert_ready should still flag the missing verification.
+        await TaskService(lab).freeze(domain.id, skip_verification=True)
+        backend = StubAgentBackend()
+        orchestrator = AgentOrchestrator(lab, backend)
+        with pytest.raises(TaskNotReadyError, match="unverified"):
+            await orchestrator.start("p", domain_id=domain.id)
+
+    async def test_start_passes_when_task_is_ready(self, lab):
+        domain = await _make_ready_domain(lab)
+        backend = StubAgentBackend()
+        orchestrator = AgentOrchestrator(lab, backend)
+        run = await orchestrator.start("p", domain_id=domain.id)
+        assert run.status == RunStatus.RUNNING

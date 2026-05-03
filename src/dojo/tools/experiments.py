@@ -32,8 +32,30 @@ def create_experiment_tools(lab: LabEnvironment) -> list[ToolDef]:
         exp = await service.get(args["experiment_id"])
         if exp is None:
             return ToolResult(error=f"Experiment {args['experiment_id']} not found")
+
+        metrics = args.get("metrics", {}) or {}
+
+        # Phase 3 contract: only metric keys that match the task's expected
+        # set are accepted. The agent must call `evaluate` and pass through
+        # the dict it returned — it cannot smuggle in custom metrics.
+        if exp.domain_id and metrics:
+            domain = await lab.domain_store.load(exp.domain_id)
+            if domain and domain.task and domain.task.config.get("expected_metrics"):
+                expected = set(domain.task.config["expected_metrics"])
+                provided = set(metrics)
+                extras = provided - expected
+                if extras:
+                    return ToolResult(
+                        error=(
+                            f"complete_experiment received metric keys "
+                            f"{sorted(extras)} that are not in the task contract "
+                            f"({sorted(expected)}). Call the frozen `evaluate` "
+                            f"tool and pass through the dict it returns."
+                        )
+                    )
+
         exp.result = exp.result or ExperimentResult()
-        exp.result.metrics = args.get("metrics", {})
+        exp.result.metrics = metrics
         exp.result.logs = args.get("logs", [])
         await service.complete(exp)
         return ToolResult(
