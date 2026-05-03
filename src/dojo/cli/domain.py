@@ -169,6 +169,64 @@ async def _create_domain(
                 typer.echo("  You can retry later via: POST /domains/{domain.id}/workspace/setup")
 
 
+@app.command("use")
+def use(
+    name_or_id: str = typer.Argument(..., help="Domain name or id"),
+    config_dir: Path = typer.Option(  # noqa: B008
+        Path(".dojo"), "--config-dir", help="Dojo state directory"
+    ),
+) -> None:
+    """Set the current domain (analogous to `git checkout`)."""
+    import asyncio
+
+    from dojo.cli._lab import build_cli_lab
+    from dojo.cli.state import set_current_domain_id
+
+    async def _run() -> None:
+        lab, _ = build_cli_lab()
+        # Try id first, fall back to name lookup
+        target = await lab.domain_store.load(name_or_id)
+        if target is None:
+            for d in await lab.domain_store.list():
+                if d.name == name_or_id:
+                    target = d
+                    break
+        if target is None:
+            typer.echo(f"error: no domain matches {name_or_id!r}", err=True)
+            sys.exit(1)
+        set_current_domain_id(config_dir, target.id)
+        typer.echo(f"✓ current domain → {target.name} ({target.id})")
+
+    asyncio.run(_run())
+
+
+@app.command("current")
+def current(
+    config_dir: Path = typer.Option(  # noqa: B008
+        Path(".dojo"), "--config-dir", help="Dojo state directory"
+    ),
+) -> None:
+    """Print the current domain id and name."""
+    import asyncio
+
+    from dojo.cli._lab import build_cli_lab
+    from dojo.cli.state import get_current_domain_id
+
+    async def _run() -> None:
+        domain_id = get_current_domain_id(config_dir)
+        if domain_id is None:
+            typer.echo("(no current domain) — run `dojo init` or `dojo domain use <name>`")
+            sys.exit(1)
+        lab, _ = build_cli_lab()
+        d = await lab.domain_store.load(domain_id)
+        if d is None:
+            typer.echo(f"current domain {domain_id!r} no longer exists")
+            sys.exit(1)
+        typer.echo(f"{d.name} ({d.id})")
+
+    asyncio.run(_run())
+
+
 @app.command()
 def scan(
     path: str = typer.Argument(..., help="Workspace directory to scan"),

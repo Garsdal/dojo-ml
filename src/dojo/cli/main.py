@@ -45,24 +45,25 @@ def start(
     _start(host=host, port=port, no_frontend=no_frontend)
 
 
-@app.command()
-def run(
-    prompt: str = typer.Argument(help="The task prompt to run"),
-    host: str = typer.Option("127.0.0.1", help="Server host"),
-    port: int = typer.Option(8000, help="Server port"),
-) -> None:
-    """Submit a task to a running Dojo.ml server."""
-    from dojo.cli.run import run as _run
+# --- Top-level commands ---
 
-    _run(prompt=prompt, host=host, port=port)
+from dojo.cli.init import init as _init  # noqa: E402
+from dojo.cli.run import run as _run  # noqa: E402
+
+app.command("init")(_init)
+app.command("run")(_run)
 
 
-# Register config subcommand group
+# --- Subcommand groups ---
+
 from dojo.cli.config import config_app  # noqa: E402
+from dojo.cli.domain import app as domain_app  # noqa: E402
+from dojo.cli.program import app as program_app  # noqa: E402
+from dojo.cli.runs import app as runs_app  # noqa: E402
+from dojo.cli.task import app as task_app  # noqa: E402
 
 app.add_typer(config_app, name="config")
-
-# Register domain subcommand group
-from dojo.cli.domain import app as domain_app  # noqa: E402
-
 app.add_typer(domain_app, name="domain")
+app.add_typer(task_app, name="task")
+app.add_typer(runs_app, name="runs")
+app.add_typer(program_app, name="program")

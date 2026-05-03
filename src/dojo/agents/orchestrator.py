@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
 
 from dojo.agents.backend import AgentBackend
 from dojo.agents.prompts import build_system_prompt
@@ -16,6 +17,7 @@ from dojo.agents.types import (
 )
 from dojo.core.domain import Domain
 from dojo.runtime.lab import LabEnvironment
+from dojo.runtime.program_loader import load_program
 from dojo.tools.server import collect_all_tools
 from dojo.utils.logging import get_logger
 
@@ -84,6 +86,14 @@ class AgentOrchestrator:
         if domain is not None:
             atoms = await self.lab.knowledge_linker.get_domain_knowledge(domain_id)
             accumulated_knowledge = [f"- [{a.confidence:.1f}] {a.claim}" for a in atoms[:20]]
+
+            # PROGRAM.md (if present) overrides domain.prompt for this run.
+            base_dir: Path | None = None
+            if self.lab.settings is not None:
+                base_dir = Path(self.lab.settings.storage.base_dir)
+            program = load_program(domain, base_dir=base_dir)
+            if program:
+                domain.prompt = program
 
         # Build system prompt with domain context
         system_prompt = build_system_prompt(

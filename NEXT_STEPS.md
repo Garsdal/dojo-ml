@@ -91,9 +91,9 @@ The user-facing surface for everything Phase 1 introduced, plus the framework fo
 
 ### 2a — Foundations
 
-- [ ] **`src/dojo/cli/state.py`** — new module. Manages `.dojo/state.yaml` (`current_domain_id`, `current_run_id`). Functions: `get_current_domain_id()`, `set_current_domain_id(id)`, `current_domain(lab) -> Domain` (errors clearly if unset). Used by every command that takes an implicit domain.
-- [ ] **`src/dojo/cli/_lab.py`** — new module. `build_cli_lab() -> LabEnvironment` — wraps `Settings.load()` + `build_lab(settings)` and returns. All CLI commands that touch runtime use this. **No HTTP.**
-- [ ] **`PROGRAM.md` convention codified.** `Domain.program_path` defaults to `<workspace_path>/PROGRAM.md` if set, else `.dojo/domains/{id}/PROGRAM.md`. At agent run start, the orchestrator reads the file (if present) and uses its content as `Domain.prompt` for that run. Hot-reload for free between runs. Write a `dojo.runtime.program_loader.load_program(domain) -> str` helper.
+- [x] **`src/dojo/cli/state.py`** ✅ Manages `.dojo/state.yaml`. Exposes `load_state`, `save_state`, `get_current_domain_id`, `set_current_domain_id`, `set_current_run_id`, plus an async `resolve_domain(lab, base_dir, override=None)` that errors with actionable messages.
+- [x] **`src/dojo/cli/_lab.py`** ✅ `build_cli_lab() -> (LabEnvironment, Settings)` — used by every runtime-touching CLI command. No HTTP.
+- [x] **`PROGRAM.md` convention codified.** ✅ `runtime/program_loader.py` defines `resolve_program_path`, `load_program`, `write_program`, `default_program_template`. The orchestrator now calls `load_program(domain)` at run start and overrides `domain.prompt` with PROGRAM.md content if present.
 
 ### 2b — `dojo init` (the single entrypoint)
 
@@ -127,23 +127,16 @@ What `dojo init` does, in order:
 
 ### 2c — Task and run subcommands
 
-- [ ] **`src/dojo/cli/task.py`** — new `dojo task` group. Commands:
-  - `dojo task show` — print the current domain's task (status, tools, frozen?)
-  - `dojo task generate [--hint TEXT]` — runs AI generation against the current domain's task (Phase 3 adds verification automatically)
-  - `dojo task verify` — runs `ToolVerifier` (Phase 3)
-  - `dojo task freeze` — freeze (Phase 3 adds the verification gate)
-  - `dojo task unfreeze` — unfreeze, with a warning that prior comparisons may not be valid
-  - `dojo task setup` — convenience: `generate` → `verify` → `freeze` in one shot (Phase 3)
-- [ ] **`src/dojo/cli/run.py`** — replace the old `/tasks` HTTP poster. New behavior:
-  - `dojo run [--max-turns N] [--max-budget-usd X] [--no-watch]` — runs the agent against the current domain. Default streams events to the terminal via the same SSE-style loop the API uses, but in-process. Writes the run id to `.dojo/state.yaml` as `current_run_id`. Exits when the run completes.
-  - `dojo runs ls [--domain X]` — list runs for the current domain (or specified)
-  - `dojo runs show <run-id>` — show a run's events / metrics / cost
-- [ ] **`src/dojo/cli/program.py`** — new (small). `dojo program edit` opens `$EDITOR` on the current domain's `PROGRAM.md`. `dojo program show` prints it. Both no-op without ceremony.
+- [x] **`src/dojo/cli/task.py`** ✅ `dojo task` group with `show`, `generate [--hint] [--dry-run]`, `freeze [--unsafe-skip-verify]`, `unfreeze`, `setup`. `verify` is deferred to Phase 3 (placeholder warning in `freeze`). `generate` is registry-aware: regression tasks use `TASK_TYPE_REGISTRY[REGRESSION].generation_prompt_template`; other types fall back to the generic `build_tool_generation_prompt`. Generated tools land on both `domain.task.tools` and `domain.tools` (Phase 3 collapses to task-only).
+- [x] **`src/dojo/cli/run.py`** ✅ Rewritten — in-process. Resolves current domain → loads PROGRAM.md → builds orchestrator → streams events to the terminal as they're produced (no HTTP). Persists the run via `lab.run_store` so the server / other CLI invocations see it. Writes `current_run_id` to `state.yaml`. Supports `--domain`, `--max-turns`, `--max-budget-usd`, `--no-watch`, `--prompt`.
+- [x] **`src/dojo/cli/runs.py`** ✅ `dojo runs ls` (table or `--json`, `--all`, `--limit`) and `dojo runs show [<id>]` (defaults to `current_run_id`, supports `--events` and `--json`). Reads from `lab.run_store` directly.
+- [x] **`src/dojo/cli/program.py`** ✅ `dojo program show` and `dojo program edit` (creates from `default_program_template` if missing, opens `$EDITOR` / `$VISUAL` / `--editor`).
 
 ### 2d — Wiring + UX
 
-- [ ] **`src/dojo/cli/main.py`** — register the new groups: `task`, `run` (top-level command, not group), `runs` (group: ls/show), `program` (group: edit/show).
-- [ ] **Help text + error messages.** Every command's `--help` should be honest about what it does. Errors must be actionable — e.g., "no current domain set" → "run `dojo init` or `dojo domain use <name>`". `Phase 3` adds the equivalent for "task not frozen" → "run `dojo task setup`".
+- [x] **`src/dojo/cli/main.py`** ✅ Registers `init`, `run` as top-level commands and `task`, `runs`, `program`, `domain`, `config` as sub-groups.
+- [x] **`dojo domain use <name>` and `dojo domain current`** ✅ added so the "no current domain" error message is actionable.
+- [x] **Help text + error messages.** ✅ "No current domain" → suggests `dojo init` or `dojo domain use <name>`. Phase 3 will add "task not frozen → `dojo task setup`".
 
 ### Definition of done (Phase 2)
 
@@ -239,7 +232,7 @@ These are all reasonable later, none are right *now*.
 
 - [x] Phase 0 — Cleanup
 - [x] Phase 1 — Task abstraction lands in core (disk as source of truth + Task/TaskService/RunStore)
-- [ ] Phase 2 — CLI happy path + PROGRAM.md convention
+- [x] Phase 2 — CLI happy path + PROGRAM.md convention
 - [ ] Phase 3 — Tool verification + anti-cheating run gating
 - [ ] Phase 4 — End-to-end real RegressionTask via CLI
 - [ ] Phase 5 — Reconnaissance
