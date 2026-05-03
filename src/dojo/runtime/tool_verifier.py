@@ -92,6 +92,7 @@ class ToolVerifier:
         owns_dir = module_dir is None
         dir_path = module_dir or Path(tempfile.mkdtemp(prefix="dojo_verify_"))
 
+        runner_script_path: Path | None = None
         try:
             (dir_path / module_filename).write_text(tool.code)
 
@@ -102,6 +103,8 @@ class ToolVerifier:
             )
 
             _cwd, python_path, env_vars = _workspace_args(workspace)
+            runner_name = f"verify_{tool.name}"
+            runner_script_path = dir_path / f"{runner_name}.py"
 
             start = time.monotonic()
             result = await self.sandbox.execute(
@@ -110,7 +113,7 @@ class ToolVerifier:
                 python_path=python_path,
                 env_vars=env_vars,
                 timeout=self.timeout,
-                name=f"verify_{tool.name}",
+                name=runner_name,
             )
             duration_ms = (time.monotonic() - start) * 1000.0
 
@@ -124,7 +127,9 @@ class ToolVerifier:
                     or error_payload.get("type")
                     or "verifier subprocess raised"
                 )
-                errors.append(f"{tool.name} raised: {msg}")
+                origin = _last_user_frame(error_payload.get("traceback") or "", module_filename)
+                where = f" at {origin}" if origin else ""
+                errors.append(f"{tool.name} raised{where}: {msg}")
                 return VerificationResult(
                     verified=False,
                     errors=errors,
@@ -135,10 +140,7 @@ class ToolVerifier:
             result_payload = _scan_marker(stdout, _RESULT_MARKER)
             if result_payload is None:
                 if result.exit_code != 0:
-                    errors.append(
-                        f"{tool.name} exited with code {result.exit_code}: "
-                        f"{stderr.strip()[:500] or stdout.strip()[:500]}"
-                    )
+                    errors.append(_format_exit_error(tool.name, result, stderr, stdout))
                 else:
                     errors.append(
                         f"{tool.name} produced no result marker — "
@@ -175,6 +177,11 @@ class ToolVerifier:
                 verified_at=datetime.now(UTC),
             )
         finally:
+            # The sandbox only auto-cleans script files when no cwd is given;
+            # we always pass cwd, so delete the runner stub ourselves to
+            # avoid leaving `verify_<tool>.py` next to the user's modules.
+            if runner_script_path is not None:
+                runner_script_path.unlink(missing_ok=True)
             if owns_dir:
                 _rmtree_quiet(dir_path)
 
@@ -379,10 +386,17 @@ sys.path.insert(0, str(_HERE))
 
 
 def _to_jsonable(value):
-    # numpy arrays → list (without importing numpy unless needed)
+    # numpy arrays + pandas Series → list via .tolist()
     if hasattr(value, "tolist") and callable(value.tolist):
         try:
             return _to_jsonable(value.tolist())
+        except Exception:
+            pass
+    # pandas DataFrames + polars frames → numpy → list. DataFrames don't have
+    # .tolist() directly, but to_numpy() gives a numpy array which does.
+    if hasattr(value, "to_numpy") and callable(value.to_numpy):
+        try:
+            return _to_jsonable(value.to_numpy().tolist())
         except Exception:
             pass
     if isinstance(value, (tuple, list)):
@@ -391,7 +405,15 @@ def _to_jsonable(value):
         return {{k: _to_jsonable(v) for k, v in value.items()}}
     if isinstance(value, (bool, int, float, str)) or value is None:
         return value
-    return str(value)
+    # Don't silently coerce unknown types to str(repr) — that produced the
+    # `expected list, got str` confusion when a tool returned a DataFrame.
+    # Fail loudly so the verifier reports something the user can act on.
+    raise TypeError(
+        f"verifier cannot JSON-encode {{type(value).__name__}} "
+        f"(no .tolist() / .to_numpy() / list / dict / scalar) — "
+        f"return numpy arrays, pandas/polars frames, or plain Python "
+        f"containers from your tool"
+    )
 
 
 try:
@@ -422,6 +444,60 @@ except Exception as e:
     }}))
     sys.exit(1)
 """
+
+
+def _last_user_frame(traceback_text: str, module_filename: str) -> str | None:
+    """Extract the last frame from a Python traceback that points at the
+    generated tool module (e.g. ``evaluate.py:12``).
+
+    Frames inside dojo's own runner stub or stdlib / third-party packages are
+    skipped — we only want to point at the file the user (or AI) authored,
+    so the error message can clearly say "fix this line in evaluate.py".
+    """
+    if not traceback_text:
+        return None
+    # Lines look like:  File "/abs/path/evaluate.py", line 12, in evaluate
+    target = module_filename
+    last: tuple[str, str] | None = None
+    for line in traceback_text.splitlines():
+        line = line.strip()
+        if not line.startswith("File "):
+            continue
+        try:
+            head, rest = line.split(",", 1)
+            path = head[len('File "') : -1]
+            line_no = rest.strip().split(",")[0].removeprefix("line ").strip()
+        except (ValueError, IndexError):
+            continue
+        if path.endswith("/" + target) or path.endswith("\\" + target) or path == target:
+            last = (target, line_no)
+    if last is None:
+        return None
+    return f"{last[0]}:{last[1]}"
+
+
+def _format_exit_error(tool_name: str, result: Any, stderr: str, stdout: str) -> str:
+    """Build a human-readable error from a non-zero exit, with hints for
+    well-known signal codes so users don't have to look up POSIX numbers."""
+    detail = stderr.strip()[:500] or stdout.strip()[:500]
+    code = result.exit_code
+    hint = ""
+    if code == -9 or code == 137:  # SIGKILL (137 = 128 + 9 in some shells)
+        hint = (
+            " — likely the OS killed it for using too much memory (SIGKILL). "
+            "Try shrinking the dataset window in PROGRAM.md, or pre-build any "
+            "expensive cache outside `dojo task setup` (run the file once with "
+            "`uv run python <sources_dir>/load_data.py`)."
+        )
+    elif code == -15 or code == 143:  # SIGTERM
+        hint = " — process was terminated (SIGTERM)."
+    elif result.stderr and "Execution timed out" in result.stderr:
+        hint = (
+            " — verification timed out. Bump the cap with "
+            "`dojo task setup --timeout <seconds>` or pre-build the cache."
+        )
+    suffix = f": {detail}" if detail else ""
+    return f"{tool_name} exited with code {code}{hint}{suffix}"
 
 
 def _scan_marker(stdout: str, marker: str) -> Any | None:
@@ -490,7 +566,18 @@ def _check_type(value: Any, spec: str) -> str | None:
     if "list" in s:
         if not isinstance(value, list):
             return f"expected list, got {type(value).__name__}"
-        if "list of list" in s and value and not isinstance(value[0], list):
+        # Empty arrays are always wrong for training/test splits — they pass
+        # the type check but produce confusing downstream errors (sklearn
+        # crashes inside evaluate with "Found array with 0 sample(s)"). Catch
+        # it here with a message that points at the actual cause.
+        if not value:
+            return (
+                "expected a non-empty list, got []. "
+                "Your data loader returned 0 rows — likely the dataset window "
+                "in PROGRAM.md (FETCH_START/FETCH_END, filters, etc.) "
+                "produced no matching rows. Inspect the cache or widen the window"
+            )
+        if "list of list" in s and not isinstance(value[0], list):
             return "expected list of lists"
         return None
     if "float" in s or "number" in s:

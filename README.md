@@ -77,6 +77,20 @@ dojo task setup
 dojo run --max-turns 30
 ```
 
+> **If the AI keeps generating the wrong adapters** (verification failures
+> on real-world pipelines, e.g. unusual pandas multi-indexes, custom dataset
+> APIs, or wrapping an existing evaluator), use Opus 4.7 for tool generation
+> instead of the default Sonnet:
+>
+> ```bash
+> DOJO_AGENT__TOOL_GENERATION_MODEL=claude-opus-4-7 dojo task setup
+> ```
+>
+> Opus is slower (~30–60s vs 15–30s) but noticeably better at translating a
+> messy `PROGRAM.md` into correct `load_data` / `evaluate` modules. Set it
+> permanently in `.dojo/config.yaml` under `agent.tool_generation_model` if
+> you want it as the default.
+
 A reasonable starter `PROGRAM.md` for California housing:
 
 ```markdown

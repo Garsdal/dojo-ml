@@ -241,6 +241,64 @@ def evaluate(y_pred):
     )
 
 
+async def test_verifier_rejects_empty_load_data_output():
+    """Empty list returns used to pass the type check ('list of float' was
+    satisfied by []) and produced misleading downstream sklearn errors. They
+    should now fail at load_data with an actionable message about the dataset
+    window."""
+    empty_load_data = """\
+def load_data():
+    return [], [], [], []
+"""
+    tool = _module_tool("load_data", empty_load_data)
+    v = ToolVerifier(LocalSandbox())
+    result = await v.verify(tool, _LOAD_CONTRACT, workspace=None)
+    assert result.verified is False
+    msg = " ".join(result.errors).lower()
+    assert "non-empty" in msg or "0 rows" in msg
+    assert "program.md" in msg
+
+
+async def test_verifier_surfaces_traceback_file_line():
+    """When a tool raises, the error message should include the user-code
+    file:line so the user knows where to look."""
+    raising = """\
+def load_data():
+    raise RuntimeError("kaboom from inside the tool")
+"""
+    tool = _module_tool("load_data", raising)
+    v = ToolVerifier(LocalSandbox())
+    result = await v.verify(tool, _LOAD_CONTRACT, workspace=None)
+    assert result.verified is False
+    msg = " ".join(result.errors)
+    assert "load_data.py:" in msg
+    assert "kaboom" in msg
+
+
+async def test_verifier_accepts_pandas_return_types():
+    """Real ML pipelines return pandas DataFrames/Series. The verifier's JSON
+    encoder used to silently `str()` DataFrames (DataFrame has no `.tolist()`)
+    and the contract check then complained `expected list, got str`. Lock in
+    that DataFrames/Series are converted via `to_numpy().tolist()` instead."""
+    import pandas as pd  # noqa: F401  — used in the generated module string
+
+    pandas_load_data = """\
+import pandas as pd
+
+
+def load_data():
+    X_train = pd.DataFrame([[1.0, 2.0], [3.0, 4.0]], columns=["a", "b"])
+    X_test = pd.DataFrame([[5.0, 6.0]], columns=["a", "b"])
+    y_train = pd.Series([1.0, 2.0], name="y")
+    y_test = pd.Series([3.0], name="y")
+    return X_train, X_test, y_train, y_test
+"""
+    tool = _module_tool("load_data", pandas_load_data)
+    v = ToolVerifier(LocalSandbox())
+    result = await v.verify(tool, _LOAD_CONTRACT, workspace=None)
+    assert result.verified is True, result.errors
+
+
 async def test_verifier_handles_arbitrary_contract():
     """Verifier should work with custom dict-shaped contracts, not just regression."""
     custom = ToolContract(

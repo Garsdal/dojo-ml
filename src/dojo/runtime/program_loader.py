@@ -72,8 +72,8 @@ _DEFAULT_TEMPLATE = """\
 
 ## Dataset
 <!--
-Describe where the data lives and how to load it. The AI uses this to write
-load_data + evaluate. A few examples:
+Describes where the data lives and how to load it. The AI uses this to write
+`load_data`. A few examples:
 
 - sklearn loader:
     Use `sklearn.datasets.fetch_california_housing(return_X_y=True)`.
@@ -89,6 +89,24 @@ load_data + evaluate. A few examples:
 -->
 TODO — describe the dataset here.
 
+## Evaluate
+<!--
+Describes what `evaluate(y_pred)` should compute. The AI uses this to write
+`evaluate`. The signature is fixed by the contract below — `def evaluate(y_pred)`
+returning `{{"rmse", "r2", "mae"}}` — but you can steer what's *inside* it.
+
+A few examples:
+
+- "Use sklearn's mean_squared_error / r2_score / mean_absolute_error against
+  the y_test produced by load_data()."
+- "Wrap our existing evaluator: `from mypkg.evaluation import evaluate as
+  _impl; metrics = _impl(y_test, y_pred)` and return its dict."
+- "Weight errors by sample_weight from load_data()'s test split."
+
+Leave blank for the default (sklearn-style metrics on the full y_test).
+-->
+TODO — describe how evaluation should work, or leave blank for the default.
+
 ## Target
 <!--
 What is the model predicting? A single sentence is enough.
@@ -103,22 +121,6 @@ How do you know the agent did well? RMSE under some threshold, beating a
 linear baseline, etc. The agent reads this and uses it to plan experiments.
 -->
 TODO — describe what success looks like.
-
-## Evaluate
-<!--
-How should `evaluate(y_pred)` compute its metrics? The signature is fixed by
-the contract below — `def evaluate(y_pred)` returning `{{"rmse", "r2", "mae"}}`
-— but you can steer what's *inside* it. A few examples:
-
-- "Use sklearn's mean_squared_error / r2_score / mean_absolute_error against
-  the y_test produced by load_data()."
-- "Wrap our existing evaluator: `from mypkg.evaluation import evaluate as
-  _impl; metrics = _impl(y_test, y_pred)` and return its dict."
-- "Weight errors by sample_weight from load_data()'s test split."
-
-Leave blank for the default (sklearn-style metrics on the full y_test).
--->
-TODO — describe how evaluation should work, or leave blank for the default.
 
 ## Contract (do not edit — generated tools are pinned to this)
 - The agent owns `train()` and any model / hyperparameter logic, called via

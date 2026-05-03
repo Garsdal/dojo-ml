@@ -105,9 +105,13 @@ Domain: {domain_name}
 ## How to read this
 - The PROGRAM.md block above is the user's spec — it tells you where the data
   lives and what the target is, in plain English. Trust it.
-- The PROGRAM.md may contain a `## Dataset` section (steers `load_data`) and an
-  `## Evaluate` section (steers what's *inside* `evaluate`, but never its
-  signature). Read both before writing each module.
+- It contains two paired sections that map 1:1 onto the modules you're writing:
+    - `## Dataset` ⟶ steers `load_data.py`. Read this before writing module 1.
+    - `## Evaluate` ⟶ steers what goes *inside* `evaluate.py`. Read this before
+      writing module 2. (The signature stays `def evaluate(y_pred)` returning
+      `{{"rmse", "r2", "mae"}}` — only the body is yours to shape.)
+  If `## Evaluate` is empty/TODO, default to sklearn-style metrics on y_test.
+  If it points at an existing project evaluator, wrap it.
 - For sklearn-bundled datasets (e.g. fetch_california_housing, load_diabetes),
   the user typically points you at the loader function — there is NO csv path
   and NO column name. Use the loader directly:
@@ -132,8 +136,9 @@ Module 1 — load_data.py
 - Takes no parameters.
 - Loads the dataset, splits into train/test using test_split_ratio.
 - Use a deterministic split (random_state=42) so evaluate sees the same y_test.
-- Returns a 4-tuple: (X_train, X_test, y_train, y_test). Each element is a
-  list-of-lists or list (numpy arrays are fine — the framework converts).
+- Returns a 4-tuple: (X_train, X_test, y_train, y_test). Each element can be
+  a list, numpy array, pandas DataFrame/Series, or polars frame — the
+  framework converts to JSON-safe shapes via `.tolist()` / `.to_numpy()`.
 - Must NOT print to stdout — return only.
 
 Module 2 — evaluate.py
