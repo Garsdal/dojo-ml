@@ -29,16 +29,25 @@ class Direction(StrEnum):
 
 @dataclass
 class ToolContract:
-    """Specifies the interface a generated tool must conform to.
+    """Specifies the function-shaped interface a generated tool must conform to.
 
-    The ToolVerifier (Phase 3) checks that the actual tool output matches
-    returns_schema before the task can be frozen.
+    Phase 4: tools are Python modules with a named entrypoint. The verifier
+    imports the module, calls ``entrypoint(**fixtures)``, and checks the
+    return value against ``returns_schema`` interpreted via ``return_kind``.
+
+    `return_kind`:
+      - "dict" (default): return value is a dict — schema keys are dict keys.
+      - "tuple": return value is a tuple/list — schema keys are positional
+        items, in order. Length must match ``len(returns_schema)``.
     """
 
     name: str
     description: str
+    entrypoint: str = ""
+    module_filename: str = ""
     params_schema: dict[str, str] = field(default_factory=dict)
     returns_schema: dict[str, str] = field(default_factory=dict)
+    return_kind: str = "dict"
 
 
 @dataclass
@@ -50,6 +59,7 @@ class TaskTypeSpec:
     required_tools: list[ToolContract]
     generation_prompt_template: str
     config_schema: dict[str, Any]  # which Task.config fields are required/optional
+    train_output_description: str = ""  # what `def train()` must return
 
 
 @dataclass
@@ -78,7 +88,7 @@ class Task:
 # ---------------------------------------------------------------------------
 
 _REGRESSION_PROMPT = """\
-You are generating Python tool code for a regression ML task.
+You are generating Python tool **modules** for a regression ML task.
 
 Domain: {domain_name}
 {domain_description}
@@ -104,41 +114,48 @@ Domain: {domain_name}
   doesn't give you better info.
 - For URLs, download via pandas/requests (the workspace has internet).
 
-## Output: exactly two tools as a JSON array
+## Output: exactly two Python modules
 
-Tool 1 — load_data
-- No parameters
-- Loads the dataset, splits into train/test using test_split_ratio
-- Use a deterministic split (random_state=42) so evaluate sees the same y_test
-- Returns JSON with keys: X_train (list of lists), X_test (list of lists),
-  y_train (flat list of floats), y_test (flat list of floats)
-- Prints the JSON to stdout; do NOT print anything else
+The framework imports these modules and calls the named functions. The agent's
+`def train()` (written separately at run-time) runs in the same Python process
+as `evaluate`, so `y_pred` never leaves memory.
 
-Tool 2 — evaluate
-- Receives y_pred injected as a local variable (a flat list of floats)
-- Reproduces the same split as load_data (same loader, same random_state)
-  to get y_test
-- Computes: rmse (float), r2 (float), mae (float)
-- Returns JSON with exactly those three keys
-- Prints the JSON to stdout; do NOT print anything else
+Module 1 — load_data.py
+- Defines a top-level function: `def load_data():`
+- Takes no parameters.
+- Loads the dataset, splits into train/test using test_split_ratio.
+- Use a deterministic split (random_state=42) so evaluate sees the same y_test.
+- Returns a 4-tuple: (X_train, X_test, y_train, y_test). Each element is a
+  list-of-lists or list (numpy arrays are fine — the framework converts).
+- Must NOT print to stdout — return only.
+
+Module 2 — evaluate.py
+- Defines a top-level function: `def evaluate(y_pred):`
+  where `y_pred` is {train_output_description}.
+- May import from load_data: `from load_data import load_data`.
+- Reproduces the same split as load_data (call `load_data()` and unpack the
+  4-tuple) to get y_test.
+- Computes: rmse (float), r2 (float), mae (float).
+- Returns a dict with exactly those three keys: {{"rmse": ..., "r2": ..., "mae": ...}}.
+- Must NOT print to stdout — return only.
 
 Output format (respond with ONLY this JSON, no markdown):
 [
   {{
     "name": "load_data",
+    "filename": "load_data.py",
+    "entrypoint": "load_data",
     "description": "Load and split the dataset described in PROGRAM.md",
     "type": "data_loader",
-    "example_usage": "# Call load_data() to get X_train, X_test, y_train, y_test",
-    "parameters": {{}},
-    "code": "<python code as a string>"
+    "code": "<python module source as a string>"
   }},
   {{
     "name": "evaluate",
+    "filename": "evaluate.py",
+    "entrypoint": "evaluate",
     "description": "Evaluate regression predictions — returns rmse, r2, mae",
     "type": "evaluator",
-    "example_usage": "# Called with y_pred injected; returns {{rmse, r2, mae}}",
-    "parameters": {{"y_pred": {{"type": "array", "items": {{"type": "number"}}}}}},
-    "code": "<python code as a string>"
+    "code": "<python module source as a string>"
   }}
 ]
 """
@@ -150,7 +167,9 @@ TASK_TYPE_REGISTRY: ClassVar[dict[TaskType, TaskTypeSpec]] = {
         required_tools=[
             ToolContract(
                 name="load_data",
-                description="Load the dataset and return a train/test split",
+                description="Load the dataset and return a (X_train, X_test, y_train, y_test) tuple",
+                entrypoint="load_data",
+                module_filename="load_data.py",
                 params_schema={},
                 returns_schema={
                     "X_train": "list of lists (float)",
@@ -158,16 +177,20 @@ TASK_TYPE_REGISTRY: ClassVar[dict[TaskType, TaskTypeSpec]] = {
                     "y_train": "list of float",
                     "y_test": "list of float",
                 },
+                return_kind="tuple",
             ),
             ToolContract(
                 name="evaluate",
-                description="Evaluate model predictions; y_pred injected as local variable",
+                description="Evaluate model predictions; receives y_pred as the only argument",
+                entrypoint="evaluate",
+                module_filename="evaluate.py",
                 params_schema={"y_pred": "list of float"},
                 returns_schema={
                     "rmse": "float",
                     "r2": "float",
                     "mae": "float",
                 },
+                return_kind="dict",
             ),
         ],
         generation_prompt_template=_REGRESSION_PROMPT,
@@ -179,5 +202,6 @@ TASK_TYPE_REGISTRY: ClassVar[dict[TaskType, TaskTypeSpec]] = {
                 "random_state": 42,
             },
         },
+        train_output_description="a flat list of float predictions for the test set, in the same order as X_test from load_data()",
     ),
 }

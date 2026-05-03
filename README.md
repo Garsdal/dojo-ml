@@ -111,6 +111,33 @@ dojo program show            # print the live PROGRAM.md
 dojo domain use <name>       # switch active domain
 ```
 
+### Stopping a run
+
+`dojo run` blocks the foreground until the agent finishes. To stop it early:
+
+- **Ctrl-C** in the running terminal — the canonical path. The orchestrator is
+  interrupted, the framework asks the backend to summarise any durable
+  findings as knowledge atoms (a small one-shot LLM call), then prints a
+  final cost line. A second Ctrl-C aborts the cleanup immediately.
+- **`dojo stop [run_id]`** from another terminal — marks the run `STOPPED`
+  on disk. This does *not* halt an in-process foreground run (the orchestrator
+  lives inside the other terminal's Python process); use it to recover
+  records left `RUNNING` after a hard kill, or to stop server-mode runs.
+
+### Reviewing what happened
+
+```bash
+dojo experiments ls          # rank experiments by the primary metric (best first)
+dojo experiments best        # show the single best experiment so far
+dojo experiments show <id>   # full detail: hypothesis, metrics, code path, errors
+dojo runs show               # last run's events + total cost
+```
+
+`dojo experiments ls` orders by the task's `primary_metric` and `direction`
+(e.g. `rmse` minimised), so the leader sits on top regardless of run order.
+The agent's training code is preserved per-experiment in the workspace as
+`__dojo_train_<experiment_id>.py` — `cat` it to reproduce a run by hand.
+
 ## Running the server (optional)
 
 If you want the web UI or HTTP API:

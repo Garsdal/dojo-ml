@@ -17,7 +17,6 @@ def _verified_tool(name: str) -> DomainTool:
         name=name,
         description=f"{name} tool",
         type=ToolType.DATA_LOADER if name == "load_data" else ToolType.EVALUATOR,
-        executable=True,
         code="print('ok')",
         verification=VerificationResult(verified=True),
     )
@@ -220,6 +219,101 @@ async def test_create_task_seeds_expected_metrics(lab) -> None:
     task = await svc.create(domain.id)
     assert "expected_metrics" in task.config
     assert set(task.config["expected_metrics"]) == {"rmse", "r2", "mae"}
+
+
+async def test_freeze_copies_tools_to_canonical_path(lab) -> None:
+    """Phase 4b: freeze should copy each tool's module to a canonical dir
+    and store its SHA-256 hash on the task config."""
+    import hashlib
+
+    from dojo.core.domain import Domain
+
+    domain = Domain(name="test")
+    await lab.domain_store.save(domain)
+    svc = TaskService(lab)
+    await svc.create(domain.id)
+
+    # Two verified tools with module_filename + code
+    domain = await lab.domain_store.load(domain.id)
+    load_code = "def load_data():\n    return [], [], [], []\n"
+    eval_code = "def evaluate(y_pred):\n    return {'rmse': 0.0, 'r2': 0.0, 'mae': 0.0}\n"
+    domain.task.tools = [
+        DomainTool(
+            name="load_data",
+            type=ToolType.DATA_LOADER,
+            module_filename="load_data.py",
+            entrypoint="load_data",
+            code=load_code,
+            verification=VerificationResult(verified=True),
+        ),
+        DomainTool(
+            name="evaluate",
+            type=ToolType.EVALUATOR,
+            module_filename="evaluate.py",
+            entrypoint="evaluate",
+            code=eval_code,
+            verification=VerificationResult(verified=True),
+        ),
+    ]
+    await lab.domain_store.save(domain)
+
+    frozen = await svc.freeze(domain.id)
+
+    canonical_dir = svc.canonical_tools_dir(domain.id)
+    assert (canonical_dir / "load_data.py").read_text() == load_code
+    assert (canonical_dir / "evaluate.py").read_text() == eval_code
+
+    hashes = frozen.config["tool_hashes"]
+    assert hashes["load_data.py"] == hashlib.sha256(load_code.encode()).hexdigest()
+    assert hashes["evaluate.py"] == hashlib.sha256(eval_code.encode()).hexdigest()
+
+
+async def test_assert_ready_detects_canonical_tampering(lab) -> None:
+    """Phase 4b: assert_ready must reject runs when canonical files are edited."""
+    from dojo.core.domain import Domain
+
+    domain = Domain(name="test")
+    await lab.domain_store.save(domain)
+    svc = TaskService(lab)
+    await svc.create(domain.id)
+
+    domain = await lab.domain_store.load(domain.id)
+    load_tool = _verified_tool("load_data")
+    load_tool.module_filename = "load_data.py"
+    eval_tool = _verified_tool("evaluate")
+    eval_tool.module_filename = "evaluate.py"
+    domain.task.tools = [load_tool, eval_tool]
+    await lab.domain_store.save(domain)
+    frozen = await svc.freeze(domain.id)
+
+    canonical_dir = svc.canonical_tools_dir(domain.id)
+    # Tamper with the canonical file
+    (canonical_dir / "evaluate.py").write_text("def evaluate(y_pred):\n    return {}\n")
+
+    with pytest.raises(TaskNotReadyError, match="tampered"):
+        svc.assert_ready(domain.id, frozen)
+
+
+async def test_assert_ready_passes_when_canonical_intact(lab) -> None:
+    """Sanity check: untouched canonical files allow assert_ready to pass."""
+    from dojo.core.domain import Domain
+
+    domain = Domain(name="test")
+    await lab.domain_store.save(domain)
+    svc = TaskService(lab)
+    await svc.create(domain.id)
+
+    domain = await lab.domain_store.load(domain.id)
+    domain.task.tools = [
+        _verified_tool("load_data"),
+        _verified_tool("evaluate"),
+    ]
+    # Set module_filename so canonical copy actually happens
+    domain.task.tools[0].module_filename = "load_data.py"
+    domain.task.tools[1].module_filename = "evaluate.py"
+    await lab.domain_store.save(domain)
+    frozen = await svc.freeze(domain.id)
+    svc.assert_ready(domain.id, frozen)  # no exception
 
 
 async def test_delete_frozen_task_raises(lab) -> None:

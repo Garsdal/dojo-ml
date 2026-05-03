@@ -54,22 +54,28 @@ def test_code_run_in_experiment_result():
     assert result.code_runs[0].run_number == 1
 
 
-def test_domain_tool_executable():
+def test_domain_tool_module_fields():
+    """Phase 4: tools carry module_filename + entrypoint for the framework
+    to import them at runtime."""
     tool = DomainTool(
         name="load_data",
         description="Load training data",
-        executable=True,
-        code="import pandas as pd\nresult = pd.read_csv('data.csv').head().to_dict()\nprint(__import__('json').dumps(result))",
-        return_description="Dict with first 5 rows",
+        code="def load_data():\n    return [], [], [], []\n",
+        module_filename="load_data.py",
+        entrypoint="load_data",
+        return_description="4-tuple of train/test arrays",
     )
-    assert tool.executable is True
     assert tool.code != ""
-    assert tool.return_description == "Dict with first 5 rows"
+    assert tool.module_filename == "load_data.py"
+    assert tool.entrypoint == "load_data"
+    assert tool.return_description == "4-tuple of train/test arrays"
 
 
-def test_domain_tool_hint_defaults():
+def test_domain_tool_module_field_defaults():
+    """A bare DomainTool has empty module_filename / entrypoint / code."""
     tool = DomainTool(name="hint_tool", description="A hint")
-    assert tool.executable is False
+    assert tool.module_filename == ""
+    assert tool.entrypoint == ""
     assert tool.code == ""
     assert tool.return_description == ""
 

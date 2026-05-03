@@ -12,7 +12,7 @@ from rich.table import Table
 
 from dojo.agents.types import AgentRun
 from dojo.cli._lab import build_cli_lab
-from dojo.cli.state import CLIStateError, resolve_domain
+from dojo.cli.state import CLIStateError, load_state, resolve_domain
 
 console = Console()
 app = typer.Typer(help="List and inspect agent runs")
@@ -88,8 +88,6 @@ def show(
 
         target_id = run_id
         if target_id is None:
-            from dojo.cli.state import load_state
-
             target_id = load_state(base_dir).current_run_id
         if target_id is None:
             console.print(

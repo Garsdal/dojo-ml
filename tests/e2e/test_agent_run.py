@@ -46,14 +46,12 @@ async def ready_domain_id(agent_settings) -> str:
         DomainTool(
             name="load_data",
             type=ToolType.DATA_LOADER,
-            executable=True,
             code="print('{}')",
             verification=VerificationResult(verified=True),
         ),
         DomainTool(
             name="evaluate",
             type=ToolType.EVALUATOR,
-            executable=True,
             code="print('{}')",
             verification=VerificationResult(verified=True),
         ),

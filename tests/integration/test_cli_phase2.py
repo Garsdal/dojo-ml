@@ -186,14 +186,12 @@ def test_run_then_runs_show_in_process(initialized_dir: Path, monkeypatch: pytes
             DomainTool(
                 name="load_data",
                 type=ToolType.DATA_LOADER,
-                executable=True,
                 code="print('{}')",
                 verification=VerificationResult(verified=True),
             ),
             DomainTool(
                 name="evaluate",
                 type=ToolType.EVALUATOR,
-                executable=True,
                 code="print('{}')",
                 verification=VerificationResult(verified=True),
             ),

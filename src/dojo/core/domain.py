@@ -80,39 +80,40 @@ class Workspace:
 class DomainTool:
     """A domain-specific tool descriptor.
 
-    Tier 1 (executable=False): Semantic hint in the system prompt.
-    The agent reads the description and example_usage and writes
-    its own code.
-
-    Tier 2 (executable=True): Actual callable MCP tool. The agent
-    calls it directly and gets a structured result. The tool code
-    runs in the workspace Python environment.
+    Phase 4: tools are Python modules with a named function entrypoint.
+    ``module_filename`` is the file the framework writes (e.g. ``evaluate.py``);
+    ``entrypoint`` is the top-level function name the framework imports
+    (``load_data`` or ``evaluate`` for the regression contract).
     """
 
     id: str = field(default_factory=generate_id)
     name: str = ""
     description: str = ""
     type: ToolType = ToolType.CUSTOM
-    parameters: dict[str, Any] = field(default_factory=dict)
     example_usage: str = ""
     created_by: str = "human"
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
-    executable: bool = False
     code: str = ""
     return_description: str = ""
     verification: VerificationResult | None = None
+    module_filename: str = ""
+    entrypoint: str = ""
 
 
 @dataclass
 class Domain:
-    """A research domain — the top-level organizational unit."""
+    """A research domain — the top-level organizational unit.
+
+    Phase 4: tools live on ``domain.task.tools``. The legacy ``Domain.tools``
+    list is gone; consumers should read from ``domain.task.tools`` and write
+    via ``TaskService``.
+    """
 
     id: str = field(default_factory=generate_id)
     name: str = ""
     description: str = ""
     prompt: str = ""
     status: DomainStatus = DomainStatus.DRAFT
-    tools: list[DomainTool] = field(default_factory=list)
     config: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
     experiment_ids: list[str] = field(default_factory=list)

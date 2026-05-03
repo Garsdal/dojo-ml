@@ -61,22 +61,27 @@ async def test_domain_update(domain_store: LocalDomainStore):
 
 
 async def test_domain_with_tools(domain_store: LocalDomainStore):
+    """Phase 4: tools live on the task, not the domain."""
+    from dojo.core.task import Task
+
     tool = DomainTool(
         name="load_data",
         description="Load the dataset",
         type=ToolType.DATA_LOADER,
         example_usage="import pandas as pd\ndf = pd.read_csv('data.csv')",
-        parameters={"type": "object", "properties": {}},
+        module_filename="load_data.py",
+        entrypoint="load_data",
         created_by="human",
     )
-    domain = Domain(name="With Tools", tools=[tool])
+    domain = Domain(name="With Tools", task=Task(tools=[tool]))
     await domain_store.save(domain)
 
     loaded = await domain_store.load(domain.id)
     assert loaded is not None
-    assert len(loaded.tools) == 1
-    assert loaded.tools[0].name == "load_data"
-    assert loaded.tools[0].type == ToolType.DATA_LOADER
+    assert loaded.task is not None
+    assert len(loaded.task.tools) == 1
+    assert loaded.task.tools[0].name == "load_data"
+    assert loaded.task.tools[0].type == ToolType.DATA_LOADER
 
 
 # --- DomainService tests ---
@@ -118,8 +123,11 @@ async def test_domain_service_activate(lab: LabEnvironment):
 
 
 async def test_domain_service_add_tool(lab: LabEnvironment):
+    """Phase 4: add_tool requires an unfrozen task on the domain."""
+    from dojo.core.task import Task
+
     service = DomainService(lab)
-    domain = Domain(name="Tool Test")
+    domain = Domain(name="Tool Test", task=Task())
     await service.create(domain)
 
     tool = DomainTool(name="eval", description="Evaluate model")
@@ -127,18 +135,23 @@ async def test_domain_service_add_tool(lab: LabEnvironment):
 
     loaded = await service.get(domain.id)
     assert loaded is not None
-    assert len(loaded.tools) == 1
-    assert loaded.tools[0].name == "eval"
+    assert loaded.task is not None
+    assert len(loaded.task.tools) == 1
+    assert loaded.task.tools[0].name == "eval"
 
 
 async def test_domain_service_remove_tool(lab: LabEnvironment):
+    """Phase 4: remove_tool operates on the task's tools list."""
+    from dojo.core.task import Task
+
     service = DomainService(lab)
     tool = DomainTool(name="to_remove")
-    domain = Domain(name="Remove Tool Test", tools=[tool])
+    domain = Domain(name="Remove Tool Test", task=Task(tools=[tool]))
     await service.create(domain)
 
     await service.remove_tool(domain.id, tool.id)
 
     loaded = await service.get(domain.id)
     assert loaded is not None
-    assert len(loaded.tools) == 0
+    assert loaded.task is not None
+    assert len(loaded.task.tools) == 0

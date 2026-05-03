@@ -16,23 +16,24 @@ from typer.testing import CliRunner
 from dojo.cli.main import app
 
 # A canned tool-generation response that the verifier should accept.
-# load_data prints a 4-key JSON; evaluate computes rmse/r2/mae from y_pred.
+# Phase 4 contract: Python modules with named entrypoints. load_data() returns
+# a 4-tuple; evaluate(y_pred) returns the rmse/r2/mae dict.
 _CANNED_TOOLS_JSON = """[
   {
     "name": "load_data",
+    "filename": "load_data.py",
+    "entrypoint": "load_data",
     "description": "Load and split a small fixture dataset",
     "type": "data_loader",
-    "example_usage": "load_data()",
-    "parameters": {},
-    "code": "import json\\nprint(json.dumps({\\"X_train\\": [[1.0]], \\"X_test\\": [[2.0]], \\"y_train\\": [1.0], \\"y_test\\": [2.0]}))"
+    "code": "def load_data():\\n    return [[1.0]], [[2.0]], [1.0], [2.0]\\n"
   },
   {
     "name": "evaluate",
+    "filename": "evaluate.py",
+    "entrypoint": "evaluate",
     "description": "Compute rmse / r2 / mae against y_test",
     "type": "evaluator",
-    "example_usage": "evaluate(y_pred=[2.0])",
-    "parameters": {"y_pred": {"type": "array", "items": {"type": "number"}}},
-    "code": "import json\\ny_test = [2.0]\\ndiffs = [a - b for a, b in zip(y_pred, y_test)]\\nimport math\\nrmse = math.sqrt(sum(d*d for d in diffs)/len(diffs))\\nmae = sum(abs(d) for d in diffs)/len(diffs)\\nprint(json.dumps({\\"rmse\\": rmse, \\"r2\\": 1.0, \\"mae\\": mae}))"
+    "code": "import math\\nfrom load_data import load_data\\n\\ndef evaluate(y_pred):\\n    _, _, _, y_test = load_data()\\n    diffs = [a - b for a, b in zip(y_pred, y_test)]\\n    mse = sum(d*d for d in diffs)/len(diffs)\\n    mae = sum(abs(d) for d in diffs)/len(diffs)\\n    return {\\"rmse\\": math.sqrt(mse), \\"r2\\": 1.0, \\"mae\\": mae}\\n"
   }
 ]"""
 
@@ -142,12 +143,12 @@ def test_dojo_task_setup_surfaces_verification_failure(
     assert init.exit_code == 0, init.output
 
     bad_tools_json = """[
-      {"name": "load_data", "type": "data_loader", "description": "broken loader",
-       "example_usage": "", "parameters": {},
-       "code": "import json\\nprint(json.dumps({\\"X_train\\": [[1]]}))"},
-      {"name": "evaluate", "type": "evaluator", "description": "broken evaluator",
-       "example_usage": "", "parameters": {"y_pred": {"type": "array"}},
-       "code": "raise RuntimeError('oops')"}
+      {"name": "load_data", "filename": "load_data.py", "entrypoint": "load_data",
+       "type": "data_loader", "description": "broken loader",
+       "code": "def load_data():\\n    return [[1]]\\n"},
+      {"name": "evaluate", "filename": "evaluate.py", "entrypoint": "evaluate",
+       "type": "evaluator", "description": "broken evaluator",
+       "code": "def evaluate(y_pred):\\n    raise RuntimeError('oops')\\n"}
     ]"""
 
     class _BrokenBackend:

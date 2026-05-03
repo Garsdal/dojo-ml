@@ -27,12 +27,15 @@ def test_build_prompt_with_hint():
 
 
 def test_build_prompt_with_existing_tools():
+    """Phase 4: existing-tools list is read from domain.task.tools."""
     domain = Domain(
         name="Test",
         description="Testing",
-        tools=[
-            DomainTool(name="load_data", description="Load data", type=ToolType.DATA_LOADER),
-        ],
+        task=Task(
+            tools=[
+                DomainTool(name="load_data", description="Load data", type=ToolType.DATA_LOADER),
+            ]
+        ),
     )
     prompt = build_tool_generation_prompt(domain)
     assert "load_data" in prompt

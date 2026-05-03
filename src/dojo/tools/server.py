@@ -7,7 +7,6 @@ from typing import Any
 from dojo.core.domain import Domain
 from dojo.runtime.lab import LabEnvironment
 from dojo.tools.base import ToolDef
-from dojo.tools.domain_tools import create_domain_tools
 from dojo.tools.experiments import create_experiment_tools
 from dojo.tools.knowledge import create_knowledge_tools
 from dojo.tools.tracking import create_tracking_tools
@@ -16,27 +15,23 @@ from dojo.tools.tracking import create_tracking_tools
 def collect_all_tools(lab: LabEnvironment, domain: Domain | None = None) -> list[ToolDef]:
     """Collect all tool definitions for an agent run.
 
-    Includes:
-    - Experiment management tools (create, complete, fail, run_experiment_code, etc.)
-    - Knowledge tools (write, search, list)
-    - Tracking tools (log_metrics, log_params, compare)
-    - Domain executable tools (if domain has executable=True tools)
+    Phase 4 surface (only):
+    - ``run_experiment`` (per-experiment driver)
+    - ``get_experiment`` / ``list_experiments`` / ``compare_experiments``
+    - Knowledge tools (write_knowledge, search_knowledge, list_knowledge)
+    - Tracking tools (log_metrics, log_params)
 
-    Args:
-        lab: The lab environment providing backend access.
-        domain: Optional domain to include its executable tools.
-
-    Returns:
-        All tool definitions for the agent run.
+    Per-domain frozen modules (``load_data.py`` / ``evaluate.py``) are no
+    longer registered as MCP tools — the runner imports them directly inside
+    ``run_experiment``. The ``domain`` argument is retained for future use
+    (e.g. dynamic tool injection) but no longer changes the returned list.
     """
-    tools = [
+    del domain  # currently unused — Phase 4 dropped per-domain MCP tools.
+    return [
         *create_experiment_tools(lab),
         *create_knowledge_tools(lab),
         *create_tracking_tools(lab),
     ]
-    if domain is not None:
-        tools.extend(create_domain_tools(lab, domain))
-    return tools
 
 
 def create_dojo_server(lab: LabEnvironment, *, adapter: str = "claude") -> Any:

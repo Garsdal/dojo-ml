@@ -48,114 +48,104 @@ class StubAgentBackend(AgentBackend):
         self._configured = True
 
     async def execute(self, prompt: str) -> AsyncIterator[AgentEvent]:
-        """Run the scripted flow, or yield custom events if provided."""
+        """Run the scripted Phase 4 flow, or yield custom events if provided.
+
+        Phase 4 surface uses ``run_experiment`` (a single tool that drives
+        train + evaluate end-to-end). The scripted flow:
+
+        1. ``search_knowledge`` — observability of the prior-knowledge step.
+        2. ``run_experiment`` — best-effort. Trivial ``def train(): return [0.0]``.
+           If the domain has no frozen task / no workspace, the call returns
+           an error result and the stub keeps going so non-tracking tests
+           still see the full event sequence.
+        3. ``write_knowledge`` — always works (global knowledge store).
+        4. ``result`` event with summary stats.
+        """
         if self._events:
             for event in self._events:
                 await asyncio.sleep(0.01)
                 yield event
             return
 
-        # --- Scripted flow using real tool handlers ---
+        async def _call(name: str, params: dict[str, Any]) -> ToolResult:
+            tool = self._tools_by_name.get(name)
+            if tool is None:
+                return ToolResult(error=f"tool {name!r} not registered")
+            return await tool.handler(params)
 
-        async def _call_tool(name: str, params: dict[str, Any]) -> ToolResult:
-            """Call a tool handler and yield tool_call / tool_result events."""
-            return await self._tools_by_name[name].handler(params)
+        domain_id = self._config.domain_id if self._config else ""
 
-        # 1. Text: announce plan
         yield AgentEvent(
             event_type="text",
             data={"text": f"Planning stub experiment for: {prompt}"},
         )
         await asyncio.sleep(0.01)
 
-        # 2. Search knowledge
+        # 1. search_knowledge
         yield AgentEvent(
             event_type="tool_call",
             data={"tool": "search_knowledge", "input": {"query": prompt, "limit": 5}},
         )
-        search_result = await _call_tool("search_knowledge", {"query": prompt, "limit": 5})
+        search_result = await _call("search_knowledge", {"query": prompt, "limit": 5})
         yield AgentEvent(
             event_type="tool_result",
             data={"tool": "search_knowledge", "output": search_result.data},
         )
         await asyncio.sleep(0.01)
 
-        # 3. Create experiment (uses the domain_id from the orchestrator's run)
-        domain_id = self._config.domain_id if self._config else ""
-        create_params = {
+        # 2. run_experiment — best-effort. The trivial train code returns a
+        #    single-element prediction list so a generic regression evaluate
+        #    that uses the test split has at least one point to score.
+        run_params = {
             "domain_id": domain_id,
             "hypothesis": f"Stub hypothesis for: {prompt}",
-            "config": {"model": "stub"},
+            "train_code": "def train():\n    return [0.0]\n",
         }
         yield AgentEvent(
             event_type="tool_call",
-            data={"tool": "create_experiment", "input": create_params},
+            data={"tool": "run_experiment", "input": run_params},
         )
-        create_result = await _call_tool("create_experiment", create_params)
-        experiment_id = create_result.data["experiment_id"]
+        run_result = await _call("run_experiment", run_params)
+        run_output: dict[str, Any] = (
+            run_result.data
+            if run_result.data is not None
+            else {"error": run_result.error or "no data"}
+        )
         yield AgentEvent(
             event_type="tool_result",
-            data={"tool": "create_experiment", "output": create_result.data},
+            data={"tool": "run_experiment", "output": run_output},
         )
+        experiment_id = (run_result.data or {}).get("experiment_id")
         await asyncio.sleep(0.01)
 
-        # 4. Complete experiment with mock metrics
-        metrics = {"accuracy": 0.95, "f1_score": 0.93}
-        complete_params = {"experiment_id": experiment_id, "metrics": metrics}
-        yield AgentEvent(
-            event_type="tool_call",
-            data={"tool": "complete_experiment", "input": complete_params},
-        )
-        complete_result = await _call_tool("complete_experiment", complete_params)
-        yield AgentEvent(
-            event_type="tool_result",
-            data={"tool": "complete_experiment", "output": complete_result.data},
-        )
-        await asyncio.sleep(0.01)
-
-        # 5. Log metrics via tracking
-        log_params = {"experiment_id": experiment_id, "metrics": metrics}
-        yield AgentEvent(
-            event_type="tool_call",
-            data={"tool": "log_metrics", "input": log_params},
-        )
-        log_result = await _call_tool("log_metrics", log_params)
-        yield AgentEvent(
-            event_type="tool_result",
-            data={"tool": "log_metrics", "output": log_result.data},
-        )
-        await asyncio.sleep(0.01)
-
-        # 6. Write knowledge
+        # 3. write_knowledge (global store; works even when no domain is set up).
         knowledge_params = {
             "context": f"Task: {prompt}",
-            "claim": "Stub model achieves 95% accuracy on test data.",
+            "claim": "Stub model recorded a baseline outcome.",
             "confidence": 0.85,
-            "evidence_ids": [experiment_id],
+            "evidence_ids": [experiment_id] if experiment_id else [],
         }
         yield AgentEvent(
             event_type="tool_call",
             data={"tool": "write_knowledge", "input": knowledge_params},
         )
-        knowledge_result = await _call_tool("write_knowledge", knowledge_params)
+        knowledge_result = await _call("write_knowledge", knowledge_params)
         yield AgentEvent(
             event_type="tool_result",
             data={"tool": "write_knowledge", "output": knowledge_result.data},
         )
         await asyncio.sleep(0.01)
 
-        # 7. Final text summary
         yield AgentEvent(
             event_type="text",
             data={"text": f"Stub agent completed task: {prompt}"},
         )
 
-        # 8. Result event
         yield AgentEvent(
             event_type="result",
             data={
                 "session_id": None,
-                "turns": 6,
+                "turns": 3,
                 "cost_usd": 0.0,
                 "duration_ms": 100,
                 "is_error": False,

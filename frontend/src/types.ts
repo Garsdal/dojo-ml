@@ -23,12 +23,12 @@ export interface DomainTool {
   description: string;
   type: string;
   example_usage: string;
-  parameters: Record<string, unknown>;
+  code: string;
+  module_filename: string;
+  entrypoint: string;
   created_by: string;
   created_at: string;
-  executable: boolean;
-  code: string;
-  return_description: string;
+  return_description?: string;
 }
 
 export interface Domain {

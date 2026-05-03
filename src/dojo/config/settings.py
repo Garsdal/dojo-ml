@@ -24,7 +24,10 @@ class LLMSettings(BaseSettings):
 class SandboxSettings(BaseSettings):
     """Sandbox execution configuration."""
 
-    timeout: float = 30.0
+    # Per-experiment wall-clock cap. 300s is generous enough for most sklearn
+    # / boosted-tree fits on tabular data while still bounding runaway agent
+    # code. Override via DOJO_SANDBOX__TIMEOUT or .dojo/config.yaml.
+    timeout: float = 300.0
 
 
 class StorageSettings(BaseSettings):

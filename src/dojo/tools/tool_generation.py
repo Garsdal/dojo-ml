@@ -57,6 +57,8 @@ def build_task_generation_prompt(
         test_split_ratio=cfg.get("test_split_ratio", 0.2),
         feature_columns=cfg.get("feature_columns") or "(not set — use PROGRAM.md)",
         hint_section=f"Additional hints from the user:\n{hint}\n" if hint else "",
+        train_output_description=spec.train_output_description
+        or "the task-specific output of train()",
     )
 
 
@@ -86,8 +88,9 @@ def build_tool_generation_prompt(domain: Domain, hint: str = "") -> str:
         A prompt string suitable for passing to an agent/LLM.
     """
     existing_tools = ""
-    if domain.tools:
-        names = ", ".join(t.name for t in domain.tools)
+    existing = domain.task.tools if domain.task is not None else []
+    if existing:
+        names = ", ".join(t.name for t in existing)
         existing_tools = f"\nExisting tools: {names}\nDo NOT duplicate these."
 
     return f"""You are a tool-generation assistant for an ML research platform.
@@ -203,6 +206,19 @@ def _validate_tool_dict(tool: dict[str, Any], *, index: int = 0) -> dict[str, An
     if not isinstance(code, str):
         code = ""
 
+    # Phase 4: function-based contract. Default module_filename / entrypoint
+    # to the tool name when the AI omits them — most generated outputs include
+    # them explicitly, but older fixtures and tests don't.
+    module_filename = tool.get("filename") or tool.get("module_filename") or ""
+    if not isinstance(module_filename, str) or not module_filename:
+        module_filename = f"{name}.py"
+    if not module_filename.endswith(".py"):
+        module_filename = f"{module_filename}.py"
+
+    entrypoint = tool.get("entrypoint") or ""
+    if not isinstance(entrypoint, str) or not entrypoint:
+        entrypoint = name
+
     return {
         "name": name,
         "description": str(description),
@@ -210,6 +226,8 @@ def _validate_tool_dict(tool: dict[str, Any], *, index: int = 0) -> dict[str, An
         "example_usage": example_usage,
         "parameters": parameters,
         "code": code,
+        "module_filename": module_filename,
+        "entrypoint": entrypoint,
     }
 
 
@@ -220,8 +238,10 @@ def dicts_to_domain_tools(
 ) -> list[DomainTool]:
     """Convert validated tool dicts into DomainTool instances.
 
-    Tools with non-empty `code` become executable=True so the orchestrator
-    registers them as MCP tools at run-time.
+    Phase 4: tools are Python modules. ``module_filename`` and ``entrypoint``
+    determine how the framework imports and calls the tool at run-time. The
+    legacy ``executable`` flag is set from ``bool(code)`` for backward compat
+    with code paths that haven't been ported yet (Phase 4e drops it).
     """
     out: list[DomainTool] = []
     for d in tool_dicts:
@@ -232,10 +252,10 @@ def dicts_to_domain_tools(
                 description=d["description"],
                 type=ToolType(d["type"]),
                 example_usage=d["example_usage"],
-                parameters=d["parameters"],
                 created_by=created_by,
                 code=code,
-                executable=bool(code),
+                module_filename=d.get("module_filename", ""),
+                entrypoint=d.get("entrypoint", ""),
             )
         )
     return out

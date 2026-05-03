@@ -76,7 +76,7 @@ def show(
                 console.print(f"    {k}: {v}")
         console.print(f"  tools ({len(t.tools)}):")
         for tool in t.tools:
-            kind = "executable" if tool.executable else "hint"
+            kind = tool.type.value
             mark = _verify_marker(tool)
             console.print(f"    {mark} {tool.name} [{kind}] — {tool.description[:60]}")
 
@@ -248,7 +248,7 @@ async def _do_generate(
             )
 
     for t in new_tools:
-        kind = "executable" if t.executable else "hint"
+        kind = t.type.value
         mark = _verify_marker(t)
         console.print(f"  {mark} {t.name} [{kind}] — {t.description[:60]}")
         if t.verification and not t.verification.verified:
@@ -258,11 +258,31 @@ async def _do_generate(
     if not save:
         return new_tools
 
+    _write_modules_to_workspace(d, new_tools)
+
     d.task.tools = new_tools
-    d.tools = list(new_tools)
     await lab.domain_store.save(d)
     console.print(f"[green]✓[/green] saved to domain {d.id}")
     return new_tools
+
+
+def _write_modules_to_workspace(d: Domain, tools: list[DomainTool]) -> None:
+    """Write each tool's source to ``<workspace>/<module_filename>``.
+
+    Phase 4: the workspace copy is the user-facing, editable source. ``freeze``
+    will read from here when copying to the canonical, immutable dir.
+    """
+    if d.workspace is None or not d.workspace.path:
+        return
+    workspace = Path(d.workspace.path)
+    if not workspace.exists():
+        return
+    for tool in tools:
+        if not tool.module_filename or not tool.code:
+            continue
+        target = workspace / tool.module_filename
+        target.write_text(tool.code)
+        console.print(f"  [dim]wrote[/dim] {target}")
 
 
 async def _do_freeze(lab: LabEnvironment, d: Domain, *, unsafe_skip_verify: bool) -> None:

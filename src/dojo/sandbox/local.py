@@ -28,7 +28,7 @@ def _safe_script_filename(name: str | None, code: str) -> str:
 class LocalSandbox(Sandbox):
     """Sandbox that executes code in a local subprocess."""
 
-    def __init__(self, timeout: float = 30.0) -> None:
+    def __init__(self, timeout: float = 300.0) -> None:
         self.timeout = timeout
 
     async def execute(

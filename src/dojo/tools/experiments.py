@@ -1,77 +1,146 @@
-"""Dojo.ml experiment management tools."""
+"""Dojo.ml experiment tools — Phase 4 surface.
 
-import json
+The agent's per-experiment surface shrinks to a single tool: ``run_experiment``.
+The framework drives the lifecycle (PENDING → RUNNING → COMPLETED/FAILED) and
+records metrics from the runner's ``__DOJO_METRICS__`` marker. Read-side tools
+(``get_experiment``, ``list_experiments``, ``compare_experiments``) stay so
+the agent can inspect history and compare runs.
+
+Removed from the MCP surface:
+  - ``create_experiment``
+  - ``complete_experiment``
+  - ``fail_experiment``
+  - ``run_experiment_code``
+
+These transitions still happen — the framework calls ``ExperimentService``
+internally inside ``run_experiment``. They're just no longer agent-callable.
+"""
+
+from __future__ import annotations
+
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from dojo.core.experiment import CodeRun, Experiment, ExperimentResult, Hypothesis
-from dojo.core.state_machine import ExperimentState
 from dojo.runtime.experiment_service import ExperimentService
 from dojo.runtime.lab import LabEnvironment
+from dojo.runtime.runner import (
+    RunnerOutcome,
+    format_runner_error,
+    parse_runner_stdout,
+    render_runner,
+)
+from dojo.runtime.task_service import TaskService
 from dojo.tools.base import ToolDef, ToolResult
+from dojo.utils.logging import get_logger
+
+logger = get_logger(__name__)
 
 
 def create_experiment_tools(lab: LabEnvironment) -> list[ToolDef]:
-    """Create all experiment tools backed by a LabEnvironment."""
+    """Return the experiment tools exposed to the agent (Phase 4 surface)."""
     service = ExperimentService(lab)
+    task_service = TaskService(lab)
 
-    async def create_experiment(args: dict[str, Any]) -> ToolResult:
-        exp = Experiment(
-            domain_id=args["domain_id"],
-            hypothesis=Hypothesis(
-                description=args["hypothesis"],
-                variables=args.get("variables", {}),
-            ),
-            config=args.get("config", {}),
+    async def run_experiment(args: dict[str, Any]) -> ToolResult:
+        """Run a complete train + evaluate experiment in one subprocess.
+
+        The agent submits ``train_code`` (a Python module defining ``def train()``);
+        the framework writes it alongside an auto-generated runner stub, executes
+        the runner, parses metrics from the stdout marker, and transitions the
+        experiment state. Anti-cheating: ``evaluate`` is imported from the
+        domain's canonical, frozen path — the agent cannot redefine it.
+        """
+        domain_id = args["domain_id"]
+        hypothesis_text = args["hypothesis"]
+        train_code = args["train_code"]
+        variables = args.get("variables") or {}
+
+        domain = await lab.domain_store.load(domain_id)
+        if domain is None:
+            return ToolResult(error=f"Domain {domain_id!r} not found")
+        if domain.task is None or not domain.task.frozen:
+            return ToolResult(
+                error=(
+                    f"Domain {domain_id!r} has no frozen task — "
+                    "freeze it with `dojo task freeze` before running experiments."
+                )
+            )
+        if domain.workspace is None or not domain.workspace.path:
+            return ToolResult(error=f"Domain {domain_id!r} has no workspace configured.")
+
+        # 1. Create + transition the experiment record.
+        experiment = Experiment(
+            domain_id=domain_id,
+            hypothesis=Hypothesis(description=hypothesis_text, variables=variables),
         )
-        exp_id = await service.create(exp)
-        await service.run(exp_id)
-        return ToolResult(data={"experiment_id": exp_id, "status": "running"})
+        experiment_id = await service.create(experiment)
+        await service.run(experiment_id)
+        experiment = await service.get(experiment_id)
+        assert experiment is not None
+        if experiment.result is None:
+            experiment.result = ExperimentResult()
 
-    async def complete_experiment(args: dict[str, Any]) -> ToolResult:
-        exp = await service.get(args["experiment_id"])
-        if exp is None:
-            return ToolResult(error=f"Experiment {args['experiment_id']} not found")
+        # 2. Lay out files. The workspace copy is named after the experiment
+        #    id so successive runs don't overwrite each other — the user (or
+        #    a future debugging session) can `cat __dojo_train_<id>.py` to
+        #    inspect exactly what produced a given metric. The artifact under
+        #    `experiments/<id>/` remains the canonical archive.
+        run_number = 1
+        train_module = f"__dojo_train_{experiment_id}"
+        train_filename = f"{train_module}.py"
 
-        metrics = args.get("metrics", {}) or {}
+        workspace_path = Path(domain.workspace.path)
+        canonical_dir = task_service.canonical_tools_dir(domain_id)
 
-        # Phase 3 contract: only metric keys that match the task's expected
-        # set are accepted. The agent must call `evaluate` and pass through
-        # the dict it returned — it cannot smuggle in custom metrics.
-        if exp.domain_id and metrics:
-            domain = await lab.domain_store.load(exp.domain_id)
-            if domain and domain.task and domain.task.config.get("expected_metrics"):
-                expected = set(domain.task.config["expected_metrics"])
-                provided = set(metrics)
-                extras = provided - expected
-                if extras:
-                    return ToolResult(
-                        error=(
-                            f"complete_experiment received metric keys "
-                            f"{sorted(extras)} that are not in the task contract "
-                            f"({sorted(expected)}). Call the frozen `evaluate` "
-                            f"tool and pass through the dict it returns."
-                        )
-                    )
+        # 2a. Persist train code as an artifact (provenance).
+        artifact_path = f"experiments/{experiment_id}/{train_filename}"
+        await lab.artifact_store.save(artifact_path, train_code.encode())
 
-        exp.result = exp.result or ExperimentResult()
-        exp.result.metrics = metrics
-        exp.result.logs = args.get("logs", [])
-        await service.complete(exp)
-        return ToolResult(
-            data={
-                "experiment_id": exp.id,
-                "status": "completed",
-                "metrics": exp.result.metrics,
-            }
+        # 2b. Write train code + runner into the workspace so the subprocess
+        #     can import them. The runner overwrites each run; we don't try
+        #     to clean up — the agent might want to inspect them.
+        (workspace_path / train_filename).write_text(train_code)
+        runner_code = render_runner(
+            train_module=train_module,
+            canonical_dir=str(canonical_dir),
+            workspace_dir=str(workspace_path),
         )
 
-    async def fail_experiment(args: dict[str, Any]) -> ToolResult:
-        exp = await service.get(args["experiment_id"])
-        if exp is None:
-            return ToolResult(error=f"Experiment {args['experiment_id']} not found")
-        await service.fail(exp, args["error"])
-        return ToolResult(data={"experiment_id": exp.id, "status": "failed"})
+        # 3. Execute. LocalSandbox writes runner_code as `<workspace>/__dojo_runner.py`
+        #    and runs `python __dojo_runner.py` from the workspace.
+        ws = domain.workspace
+        exec_result = await lab.sandbox.execute(
+            runner_code,
+            cwd=str(workspace_path),
+            python_path=ws.python_path,
+            env_vars=ws.env_vars or None,
+            name="__dojo_runner",
+        )
+
+        # 4. Record the CodeRun before deciding success/failure so the artifact
+        #    trail is complete even when the runner crashes.
+        experiment.result.code_runs.append(
+            CodeRun(
+                run_number=run_number,
+                code_path=artifact_path,
+                description=hypothesis_text,
+                exit_code=exec_result.exit_code,
+                duration_ms=exec_result.duration_ms,
+                timestamp=datetime.now(UTC),
+            )
+        )
+
+        outcome = parse_runner_stdout(exec_result.stdout)
+        return await _finalise_experiment(
+            service=service,
+            experiment=experiment,
+            domain_task_config=domain.task.config,
+            outcome=outcome,
+            exec_result=exec_result,
+            run_number=run_number,
+        )
 
     async def get_experiment(args: dict[str, Any]) -> ToolResult:
         exp = await service.get(args["experiment_id"])
@@ -121,160 +190,49 @@ def create_experiment_tools(lab: LabEnvironment) -> list[ToolDef]:
                 )
         return ToolResult(data={"comparison": rows, "count": len(rows)})
 
-    async def run_experiment_code(args: dict[str, Any]) -> ToolResult:
-        """Execute Python code for an experiment, storing it as a traceable artifact."""
-        experiment_id = args["experiment_id"]
-        code = args["code"]
-        description = args.get("description", "")
-
-        exp = await service.get(experiment_id)
-        if exp is None:
-            return ToolResult(error=f"Experiment {experiment_id} not found")
-        if exp.state != ExperimentState.RUNNING:
-            return ToolResult(
-                error=f"Experiment {experiment_id} is not in RUNNING state (state={exp.state.value})"
-            )
-
-        # Determine run number
-        current_runs = exp.result.code_runs if exp.result else []
-        run_number = len(current_runs) + 1
-
-        # Store code as artifact before execution
-        code_path = f"experiments/{experiment_id}/run_{run_number}.py"
-        await lab.artifact_store.save(code_path, code.encode())
-
-        # Get workspace config from domain
-        cwd: str | None = None
-        python_path: str | None = None
-        env_vars: dict[str, str] | None = None
-
-        if exp.domain_id:
-            domain = await lab.domain_store.load(exp.domain_id)
-            if domain and domain.workspace and domain.workspace.ready:
-                ws = domain.workspace
-                cwd = ws.path or None
-                python_path = ws.python_path
-                env_vars = ws.env_vars or None
-
-        # Execute the code
-        exec_result = await lab.sandbox.execute(
-            code,
-            cwd=cwd,
-            python_path=python_path,
-            env_vars=env_vars,
-        )
-
-        # Store execution metadata
-        meta = {
-            "run_number": run_number,
-            "code_path": code_path,
-            "description": description,
-            "exit_code": exec_result.exit_code,
-            "duration_ms": exec_result.duration_ms,
-            "timestamp": datetime.now(UTC).isoformat(),
-        }
-        meta_path = f"experiments/{experiment_id}/run_{run_number}_meta.json"
-        await lab.artifact_store.save(meta_path, json.dumps(meta).encode())
-
-        # Record the code run on the experiment
-        code_run = CodeRun(
-            run_number=run_number,
-            code_path=code_path,
-            description=description,
-            exit_code=exec_result.exit_code,
-            duration_ms=exec_result.duration_ms,
-            timestamp=datetime.now(UTC),
-        )
-        if exp.result is None:
-            exp.result = ExperimentResult()
-        exp.result.code_runs.append(code_run)
-        await lab.experiment_store.save(exp)
-
-        return ToolResult(
-            data={
-                "exit_code": exec_result.exit_code,
-                "stdout": exec_result.stdout,
-                "stderr": exec_result.stderr,
-                "duration_ms": exec_result.duration_ms,
-                "code_path": code_path,
-                "run_number": run_number,
-            }
-        )
-
     return [
         ToolDef(
-            name="create_experiment",
+            name="run_experiment",
             description=(
-                "Create a new ML experiment with a hypothesis to test. Returns the "
-                "experiment ID. Always create an experiment before running code for it."
+                "Run a single train+evaluate experiment in one subprocess. "
+                "Pass `train_code` as a Python module that defines `def train()` "
+                "returning the task-specific output (regression: a flat list of "
+                "float predictions for the test set). The framework imports your "
+                "train module and the canonical `evaluate`, runs them in the "
+                "same Python process, parses the metrics from the runner's "
+                "stdout marker, and records them on the experiment."
             ),
             parameters={
                 "type": "object",
                 "properties": {
                     "domain_id": {
                         "type": "string",
-                        "description": "The domain this experiment belongs to",
+                        "description": "The domain this experiment belongs to.",
                     },
                     "hypothesis": {
                         "type": "string",
-                        "description": "What you want to test or prove",
+                        "description": "What this experiment tests, in one sentence.",
+                    },
+                    "train_code": {
+                        "type": "string",
+                        "description": (
+                            "Python source defining `def train()`. May import from "
+                            "`load_data` (frozen) and any standard libs available "
+                            "in the workspace."
+                        ),
                     },
                     "variables": {
                         "type": "object",
                         "description": (
-                            "Key variables for the hypothesis (e.g. model type, hyperparams)"
+                            "Optional hypothesis variables (e.g. {'model': 'ridge', "
+                            "'alpha': 1.0}). Recorded for traceability; not used "
+                            "by the runner."
                         ),
                     },
-                    "config": {
-                        "type": "object",
-                        "description": "Experiment configuration metadata",
-                    },
                 },
-                "required": ["domain_id", "hypothesis"],
+                "required": ["domain_id", "hypothesis", "train_code"],
             },
-            handler=create_experiment,
-        ),
-        ToolDef(
-            name="complete_experiment",
-            description=(
-                "Mark an experiment as completed with its metrics and optional logs. "
-                "Call this after your code has run and you have results."
-            ),
-            parameters={
-                "type": "object",
-                "properties": {
-                    "experiment_id": {"type": "string"},
-                    "metrics": {
-                        "type": "object",
-                        "description": (
-                            "Metric name → float value (e.g. {'rmse': 4.2, 'r2': 0.87})"
-                        ),
-                    },
-                    "logs": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Optional log messages",
-                    },
-                },
-                "required": ["experiment_id"],
-            },
-            handler=complete_experiment,
-        ),
-        ToolDef(
-            name="fail_experiment",
-            description="Mark an experiment as failed with an error message.",
-            parameters={
-                "type": "object",
-                "properties": {
-                    "experiment_id": {"type": "string"},
-                    "error": {
-                        "type": "string",
-                        "description": "What went wrong",
-                    },
-                },
-                "required": ["experiment_id", "error"],
-            },
-            handler=fail_experiment,
+            handler=run_experiment,
         ),
         ToolDef(
             name="get_experiment",
@@ -285,10 +243,7 @@ def create_experiment_tools(lab: LabEnvironment) -> list[ToolDef]:
             parameters={
                 "type": "object",
                 "properties": {
-                    "experiment_id": {
-                        "type": "string",
-                        "description": "The experiment ID",
-                    },
+                    "experiment_id": {"type": "string"},
                 },
                 "required": ["experiment_id"],
             },
@@ -300,10 +255,7 @@ def create_experiment_tools(lab: LabEnvironment) -> list[ToolDef]:
             parameters={
                 "type": "object",
                 "properties": {
-                    "domain_id": {
-                        "type": "string",
-                        "description": "Filter by domain ID (optional)",
-                    },
+                    "domain_id": {"type": "string"},
                 },
             },
             handler=list_experiments,
@@ -320,39 +272,82 @@ def create_experiment_tools(lab: LabEnvironment) -> list[ToolDef]:
                     "experiment_ids": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "List of experiment IDs to compare",
                     },
                 },
                 "required": ["experiment_ids"],
             },
             handler=compare_experiments,
         ),
-        ToolDef(
-            name="run_experiment_code",
-            description=(
-                "Execute Python code for an experiment in the workspace environment. "
-                "The code is automatically saved as a traceable artifact linked to the experiment. "
-                "Use this instead of Bash for all experiment code — it runs with the correct "
-                "workspace dependencies (no setup needed) and gives you full code traceability."
-            ),
-            parameters={
-                "type": "object",
-                "properties": {
-                    "experiment_id": {
-                        "type": "string",
-                        "description": "The experiment ID this code belongs to",
-                    },
-                    "code": {
-                        "type": "string",
-                        "description": "Python code to execute",
-                    },
-                    "description": {
-                        "type": "string",
-                        "description": "Brief description of what this code does",
-                    },
-                },
-                "required": ["experiment_id", "code"],
-            },
-            handler=run_experiment_code,
-        ),
     ]
+
+
+async def _finalise_experiment(
+    *,
+    service: ExperimentService,
+    experiment: Experiment,
+    domain_task_config: dict[str, Any],
+    outcome: RunnerOutcome,
+    exec_result: Any,
+    run_number: int,
+) -> ToolResult:
+    """Translate the runner outcome into an experiment state transition + tool result."""
+    assert experiment.result is not None
+
+    if outcome.kind == "metrics":
+        expected = set(domain_task_config.get("expected_metrics") or [])
+        if expected:
+            extras = set(outcome.metrics) - expected
+            if extras:
+                msg = (
+                    f"evaluate returned unexpected metric keys {sorted(extras)} "
+                    f"(expected: {sorted(expected)})"
+                )
+                experiment.result.error = msg
+                await service.fail(experiment, msg)
+                return ToolResult(
+                    data={
+                        "experiment_id": experiment.id,
+                        "status": "failed",
+                        "error": msg,
+                        "stdout": exec_result.stdout,
+                        "stderr": exec_result.stderr,
+                        "exit_code": exec_result.exit_code,
+                        "run_number": run_number,
+                    }
+                )
+        experiment.result.metrics = outcome.metrics
+        await service.complete(experiment)
+        return ToolResult(
+            data={
+                "experiment_id": experiment.id,
+                "status": "completed",
+                "metrics": experiment.result.metrics,
+                "stdout": exec_result.stdout,
+                "stderr": exec_result.stderr,
+                "exit_code": exec_result.exit_code,
+                "run_number": run_number,
+            }
+        )
+
+    if outcome.kind == "error":
+        msg = (
+            f"{outcome.error.get('type', 'Exception')}: "
+            f"{outcome.error.get('message', '')}\n\n"
+            f"{outcome.error.get('traceback', '')[:2000]}"
+        )
+    else:
+        msg = format_runner_error(exec_result.stdout, exec_result.stderr, exec_result.exit_code)
+
+    experiment.result.error = msg
+    await service.fail(experiment, msg)
+    return ToolResult(
+        data={
+            "experiment_id": experiment.id,
+            "status": "failed",
+            "error": msg,
+            "stdout": exec_result.stdout,
+            "stderr": exec_result.stderr,
+            "exit_code": exec_result.exit_code,
+            "run_number": run_number,
+        }
+    )

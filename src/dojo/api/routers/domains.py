@@ -35,7 +35,9 @@ class DomainToolRequest(BaseModel):
     description: str = ""
     type: str = "custom"
     example_usage: str = ""
-    parameters: dict[str, Any] = {}
+    code: str = ""
+    module_filename: str = ""
+    entrypoint: str = ""
     created_by: str = "human"
 
 
@@ -45,7 +47,9 @@ class DomainToolResponse(BaseModel):
     description: str
     type: str
     example_usage: str
-    parameters: dict[str, Any]
+    code: str = ""
+    module_filename: str = ""
+    entrypoint: str = ""
     created_by: str
     created_at: str
 
@@ -108,10 +112,17 @@ def _tool_response(tool: DomainTool) -> DomainToolResponse:
         description=tool.description,
         type=tool.type.value,
         example_usage=tool.example_usage,
-        parameters=tool.parameters,
+        code=tool.code,
+        module_filename=tool.module_filename,
+        entrypoint=tool.entrypoint,
         created_by=tool.created_by,
         created_at=tool.created_at.isoformat(),
     )
+
+
+def _domain_tools(domain: Domain) -> list[DomainTool]:
+    """Phase 4: tools live on ``domain.task.tools``. None if no task."""
+    return list(domain.task.tools) if domain.task is not None else []
 
 
 def _domain_response(domain: Domain) -> DomainResponse:
@@ -133,7 +144,7 @@ def _domain_response(domain: Domain) -> DomainResponse:
         config=domain.config,
         metadata=domain.metadata,
         experiment_ids=domain.experiment_ids,
-        tools=[_tool_response(t) for t in domain.tools],
+        tools=[_tool_response(t) for t in _domain_tools(domain)],
         workspace=workspace,
         created_at=domain.created_at.isoformat(),
         updated_at=domain.updated_at.isoformat(),
@@ -156,7 +167,9 @@ async def create_domain(body: CreateDomainRequest, request: Request) -> DomainRe
             description=t.description,
             type=ToolType(t.type),
             example_usage=t.example_usage,
-            parameters=t.parameters,
+            code=t.code,
+            module_filename=t.module_filename,
+            entrypoint=t.entrypoint,
             created_by=t.created_by,
         )
         for t in body.tools
@@ -173,6 +186,10 @@ async def create_domain(body: CreateDomainRequest, request: Request) -> DomainRe
             env_vars=body.workspace.env_vars,
         )
 
+    # Phase 4: tools live on the task. Attach as a draft (unfrozen) task so
+    # the create-domain payload survives until `dojo task setup` runs.
+    task = Task(tools=tools) if tools else None
+
     domain = Domain(
         name=body.name,
         description=body.description,
@@ -180,7 +197,7 @@ async def create_domain(body: CreateDomainRequest, request: Request) -> DomainRe
         status=DomainStatus.ACTIVE,
         config=body.config,
         metadata=body.metadata,
-        tools=tools,
+        task=task,
         workspace=workspace,
     )
     await service.create(domain)
@@ -256,7 +273,9 @@ async def add_domain_tool(
         description=body.description,
         type=ToolType(body.type),
         example_usage=body.example_usage,
-        parameters=body.parameters,
+        code=body.code,
+        module_filename=body.module_filename,
+        entrypoint=body.entrypoint,
         created_by=body.created_by,
     )
     await service.add_tool(domain_id, tool)
@@ -270,7 +289,7 @@ async def list_domain_tools(domain_id: str, request: Request) -> list[DomainTool
     domain = await service.get(domain_id)
     if domain is None:
         raise HTTPException(status_code=404, detail="Domain not found")
-    return [_tool_response(t) for t in domain.tools]
+    return [_tool_response(t) for t in _domain_tools(domain)]
 
 
 @router.delete("/{domain_id}/tools/{tool_id}", status_code=204)
@@ -474,8 +493,9 @@ class GeneratedToolResponse(BaseModel):
     description: str
     type: str
     example_usage: str
-    parameters: dict[str, Any]
-    executable: bool = False
+    code: str = ""
+    module_filename: str = ""
+    entrypoint: str = ""
     verification: VerificationResultResponse | None = None
 
 
@@ -561,10 +581,9 @@ async def generate_tools(
             tools, domain.task, sandbox=lab.sandbox, workspace=domain.workspace
         )
 
-    # Persist on the task (Phase 3 source of truth) and on domain (deprecated mirror)
+    # Phase 4: tools live on the task only.
     if domain.task is not None:
         domain.task.tools = tools
-    domain.tools = list(tools)
     await service.update(domain)
 
     return GenerateToolsResponse(
@@ -575,8 +594,9 @@ async def generate_tools(
                 description=t.description,
                 type=t.type.value,
                 example_usage=t.example_usage,
-                parameters=t.parameters,
-                executable=t.executable,
+                code=t.code,
+                module_filename=t.module_filename,
+                entrypoint=t.entrypoint,
                 verification=_verification_response(t),
             )
             for t in tools

@@ -41,25 +41,30 @@ async def test_domain_without_workspace_roundtrip(tmp_path: Path):
     assert loaded.workspace is None
 
 
-async def test_domain_tool_executable_roundtrip(tmp_path: Path):
-    """Executable domain tool fields are persisted."""
+async def test_domain_tool_module_roundtrip(tmp_path: Path):
+    """Phase 4: tools persist with module_filename + entrypoint on the task."""
+    from dojo.core.task import Task
+
     store = LocalDomainStore(tmp_path / "domains")
 
     tool = DomainTool(
         name="my_tool",
-        executable=True,
-        code="print('hello')",
-        return_description="Returns hello",
+        code="def my_tool():\n    return 1\n",
+        module_filename="my_tool.py",
+        entrypoint="my_tool",
+        return_description="Returns 1",
     )
-    domain = Domain(name="Test", tools=[tool])
+    domain = Domain(name="Test", task=Task(tools=[tool]))
     await store.save(domain)
 
     loaded = await store.load(domain.id)
     assert loaded is not None
-    loaded_tool = loaded.tools[0]
-    assert loaded_tool.executable is True
-    assert loaded_tool.code == "print('hello')"
-    assert loaded_tool.return_description == "Returns hello"
+    assert loaded.task is not None
+    loaded_tool = loaded.task.tools[0]
+    assert loaded_tool.module_filename == "my_tool.py"
+    assert loaded_tool.entrypoint == "my_tool"
+    assert loaded_tool.code.startswith("def my_tool")
+    assert loaded_tool.return_description == "Returns 1"
 
 
 async def test_domain_git_workspace_roundtrip(tmp_path: Path):
@@ -121,23 +126,27 @@ async def test_workspace_empty_env_vars_roundtrip(tmp_path: Path):
     assert loaded.workspace.env_vars == {}
 
 
-async def test_domain_tool_non_executable_roundtrip(tmp_path: Path):
-    """Non-executable (hint) tool fields are persisted."""
+async def test_domain_tool_default_fields_roundtrip(tmp_path: Path):
+    """A tool created with only a name should round-trip with empty defaults
+    on the new fields (no module_filename, no entrypoint, no code)."""
+    from dojo.core.task import Task
+
     store = LocalDomainStore(tmp_path / "domains")
 
     tool = DomainTool(
         name="hint_tool",
         description="A semantic hint",
-        executable=False,
         example_usage="import pandas as pd\ndf = pd.read_csv('data.csv')",
     )
-    domain = Domain(name="HintDomain", tools=[tool])
+    domain = Domain(name="HintDomain", task=Task(tools=[tool]))
     await store.save(domain)
 
     loaded = await store.load(domain.id)
     assert loaded is not None
-    lt = loaded.tools[0]
-    assert lt.executable is False
+    assert loaded.task is not None
+    lt = loaded.task.tools[0]
+    assert lt.module_filename == ""
+    assert lt.entrypoint == ""
     assert lt.code == ""
     assert lt.example_usage == "import pandas as pd\ndf = pd.read_csv('data.csv')"
 

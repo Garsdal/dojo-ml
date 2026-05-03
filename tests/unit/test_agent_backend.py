@@ -33,7 +33,11 @@ class TestStubAgentBackend:
         assert events[0].data["text"] == "hello"
 
     async def test_execute_with_real_tools(self, lab):
-        """When configured with real tool defs, stub calls actual tool handlers."""
+        """Phase 4: stub emits the new two-tool flow even without a frozen domain.
+
+        run_experiment returns an error result (no frozen task), but the stub
+        keeps going so callers still see the full event sequence.
+        """
         tools = collect_all_tools(lab)
         config = AgentRunConfig(domain_id="test-domain-123")
         backend = StubAgentBackend()
@@ -43,42 +47,21 @@ class TestStubAgentBackend:
         async for event in backend.execute("test prompt"):
             events.append(event)
 
-        # Should have tool_call/tool_result pairs plus text and result
         event_types = [e.event_type for e in events]
-        assert "tool_call" in event_types
-        assert "tool_result" in event_types
         assert event_types[0] == "text"  # Planning announcement
         assert event_types[-1] == "result"  # Final result
+        assert "tool_call" in event_types
+        assert "tool_result" in event_types
 
-        # Should have called: search_knowledge, create_experiment,
-        # complete_experiment, log_metrics, write_knowledge
         tool_calls = [e for e in events if e.event_type == "tool_call"]
         tool_names = [e.data["tool"] for e in tool_calls]
         assert "search_knowledge" in tool_names
-        assert "create_experiment" in tool_names
-        assert "complete_experiment" in tool_names
-        assert "log_metrics" in tool_names
+        assert "run_experiment" in tool_names
         assert "write_knowledge" in tool_names
 
-    async def test_execute_creates_experiment_in_store(self, lab):
-        """The scripted flow should actually create an experiment in the store."""
-        tools = collect_all_tools(lab)
-        config = AgentRunConfig(domain_id="test-domain-456")
-        backend = StubAgentBackend()
-        await backend.configure(tools, config)
-
-        async for _ in backend.execute("create experiment test"):
-            pass
-
-        experiments = await lab.experiment_store.list()
-        assert len(experiments) == 1
-        exp = experiments[0]
-        assert exp.domain_id == "test-domain-456"
-        assert exp.result is not None
-        assert exp.result.metrics["accuracy"] == pytest.approx(0.95)
-
-    async def test_execute_writes_knowledge(self, lab):
-        """The scripted flow should write a knowledge atom."""
+    async def test_execute_writes_knowledge_even_without_frozen_domain(self, lab):
+        """write_knowledge is global — works without a domain. The stub flow
+        guarantees a knowledge atom regardless of whether run_experiment ran."""
         tools = collect_all_tools(lab)
         config = AgentRunConfig(domain_id="test-domain-789")
         backend = StubAgentBackend()
@@ -89,22 +72,7 @@ class TestStubAgentBackend:
 
         atoms = await lab.memory_store.list()
         assert len(atoms) >= 1
-        assert any("95%" in a.claim for a in atoms)
-
-    async def test_execute_logs_metrics_to_tracking(self, lab):
-        """The scripted flow should log metrics via the tracking backend."""
-        tools = collect_all_tools(lab)
-        config = AgentRunConfig(domain_id="test-domain-track")
-        backend = StubAgentBackend()
-        await backend.configure(tools, config)
-
-        async for _ in backend.execute("tracking test"):
-            pass
-
-        experiments = await lab.experiment_store.list()
-        assert len(experiments) == 1
-        tracked = await lab.tracking.get_metrics(experiments[0].id)
-        assert tracked["accuracy"] == pytest.approx(0.95)
+        assert any("baseline" in a.claim.lower() for a in atoms)
 
     async def test_stop_is_noop(self):
         backend = StubAgentBackend()

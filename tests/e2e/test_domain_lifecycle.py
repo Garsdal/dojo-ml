@@ -50,13 +50,17 @@ async def test_domain_not_found(client: AsyncClient):
 
 
 async def test_domain_tools(client: AsyncClient):
-    """Domain tool management."""
-    # Create domain
+    """Phase 4: domain tools live on the task. The domain must have an
+    unfrozen task before /tools mutations are allowed."""
     resp = await client.post(
         "/domains",
         json={"name": "Tool Test Domain"},
     )
     domain_id = resp.json()["id"]
+
+    # Create a task on the domain (Phase 4: tools attach to task.tools).
+    resp = await client.post(f"/domains/{domain_id}/task", json={"type": "regression"})
+    assert resp.status_code in (200, 201), resp.text
 
     # Add tool
     resp = await client.post(

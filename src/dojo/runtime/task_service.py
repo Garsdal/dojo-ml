@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
+from dojo.core.domain import Domain, DomainTool
 from dojo.core.task import TASK_TYPE_REGISTRY, Task, TaskType
 from dojo.runtime.lab import LabEnvironment
 from dojo.utils.logging import get_logger
@@ -107,6 +110,12 @@ class TaskService:
         Every required tool (per `TASK_TYPE_REGISTRY`) must be present *and*
         have `verification.verified is True`. Pass ``skip_verification=True``
         only for explicit user overrides (e.g. CLI ``--unsafe-skip-verify``).
+
+        Phase 4: copies each tool's module file into a canonical, immutable
+        directory (``<base>/domains/{id}/tools/<filename>``) and stores the
+        SHA-256 of each file on ``task.config["tool_hashes"]``. The runner
+        imports from this canonical dir at experiment time, so the workspace
+        copy can be edited or deleted without affecting frozen runs.
         """
         domain = await self.lab.domain_store.load(domain_id)
         if domain is None:
@@ -122,12 +131,21 @@ class TaskService:
                     errors=errors,
                 )
 
+        hashes = self._copy_tools_to_canonical(domain)
+        if hashes:
+            domain.task.config["tool_hashes"] = hashes
+
         domain.task.frozen = True
         domain.task.updated_at = datetime.now(UTC)
         domain.updated_at = datetime.now(UTC)
         await self.lab.domain_store.save(domain)
 
-        logger.info("task_frozen", domain_id=domain_id, task_id=domain.task.id)
+        logger.info(
+            "task_frozen",
+            domain_id=domain_id,
+            task_id=domain.task.id,
+            canonical_files=list(hashes),
+        )
         return domain.task
 
     async def unfreeze(self, domain_id: str) -> Task:
@@ -163,8 +181,8 @@ class TaskService:
         await self.lab.domain_store.save(domain)
 
     def assert_ready(self, domain_id: str, task: Task | None) -> None:
-        """Raise TaskNotReadyError if the task is missing, unfrozen, or has
-        unverified required tools.
+        """Raise TaskNotReadyError if the task is missing, unfrozen, has
+        unverified required tools, or canonical tool files are tampered.
 
         Called by the orchestrator before starting a run.
         """
@@ -183,6 +201,86 @@ class TaskService:
             raise TaskNotReadyError(
                 f"Domain {domain_id!r} has unverified tools: " + "; ".join(errors)
             )
+        tamper = self._tamper_errors(domain_id, task)
+        if tamper:
+            raise TaskNotReadyError(
+                f"Domain {domain_id!r} canonical tool files have been tampered: "
+                + "; ".join(tamper)
+            )
+
+    def canonical_tools_dir(self, domain_id: str) -> Path:
+        """Return ``<storage_base>/domains/{id}/tools``."""
+        base = (
+            Path(self.lab.settings.storage.base_dir)
+            if self.lab.settings is not None
+            else Path(".dojo")
+        )
+        return base / "domains" / domain_id / "tools"
+
+    def _copy_tools_to_canonical(self, domain: Domain) -> dict[str, str]:
+        """Copy each tool's module file to the canonical dir; return SHA-256 hashes.
+
+        Source preference: ``<workspace>/<module_filename>`` (the user-facing,
+        editable copy). Falls back to ``tool.code`` (the in-memory source from
+        generation) when the workspace copy is missing — keeps tests, in-memory
+        flows, and forced freezes working.
+        """
+        if domain.task is None:
+            return {}
+
+        canonical_dir = self.canonical_tools_dir(domain.id)
+        canonical_dir.mkdir(parents=True, exist_ok=True)
+
+        workspace_path = (
+            Path(domain.workspace.path) if domain.workspace and domain.workspace.path else None
+        )
+
+        hashes: dict[str, str] = {}
+        for tool in domain.task.tools:
+            if not tool.module_filename:
+                continue
+            source = _read_tool_source(tool, workspace_path)
+            if source is None:
+                continue
+            target = canonical_dir / tool.module_filename
+            target.write_text(source)
+            hashes[tool.module_filename] = hashlib.sha256(source.encode()).hexdigest()
+            tool.code = source  # in-memory source mirrors the canonical bytes
+        return hashes
+
+    def _tamper_errors(self, domain_id: str, task: Task) -> list[str]:
+        """Return per-file tamper messages, or an empty list when no hashes
+        are stored (legacy / forced freezes) or the canonical dir is intact."""
+        recorded: dict[str, str] = task.config.get("tool_hashes") or {}
+        if not recorded:
+            return []
+        canonical_dir = self.canonical_tools_dir(domain_id)
+        out: list[str] = []
+        for filename, expected in recorded.items():
+            path = canonical_dir / filename
+            if not path.exists():
+                out.append(f"{filename} missing from canonical dir")
+                continue
+            actual = hashlib.sha256(path.read_bytes()).hexdigest()
+            if actual != expected:
+                out.append(f"{filename} hash mismatch (canonical edited?)")
+        return out
+
+
+def _read_tool_source(tool: DomainTool, workspace_path: Path | None) -> str | None:
+    """Pick the source bytes to copy to the canonical dir.
+
+    Workspace file wins (user-edited copy). Falls back to in-memory ``tool.code``
+    so unit tests and in-memory flows still work. Returns ``None`` when neither
+    source has bytes — caller decides whether that's fatal.
+    """
+    if workspace_path is not None:
+        candidate = workspace_path / tool.module_filename
+        if candidate.exists():
+            return candidate.read_text()
+    if tool.code:
+        return tool.code
+    return None
 
 
 def _verification_errors(task: Task) -> list[str]:

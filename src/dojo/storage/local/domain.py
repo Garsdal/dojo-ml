@@ -90,15 +90,15 @@ class LocalDomainStore(DomainStore):
             description=data.get("description", ""),
             type=ToolType(data.get("type", "custom")),
             example_usage=data.get("example_usage", ""),
-            parameters=data.get("parameters", {}),
             created_by=data.get("created_by", "human"),
             created_at=datetime.fromisoformat(data["created_at"])
             if "created_at" in data
             else datetime.now(),
-            executable=data.get("executable", False),
             code=data.get("code", ""),
             return_description=data.get("return_description", ""),
             verification=verification,
+            module_filename=data.get("module_filename", ""),
+            entrypoint=data.get("entrypoint", ""),
         )
 
     @staticmethod
@@ -124,8 +124,6 @@ class LocalDomainStore(DomainStore):
 
     @staticmethod
     def _from_dict(data: dict[str, Any]) -> Domain:
-        tools = [LocalDomainStore._tool_from_dict(t) for t in data.get("tools", [])]
-
         workspace = None
         if data.get("workspace"):
             workspace = LocalDomainStore._workspace_from_dict(data["workspace"])
@@ -140,7 +138,6 @@ class LocalDomainStore(DomainStore):
             description=data.get("description", ""),
             prompt=data.get("prompt", ""),
             status=DomainStatus(data.get("status", "draft")),
-            tools=tools,
             config=data.get("config", {}),
             metadata=data.get("metadata", {}),
             experiment_ids=data.get("experiment_ids", []),

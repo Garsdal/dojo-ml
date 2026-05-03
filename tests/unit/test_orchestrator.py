@@ -15,7 +15,6 @@ def _verified(name: str) -> DomainTool:
         name=name,
         description=name,
         type=ToolType.DATA_LOADER if name == "load_data" else ToolType.EVALUATOR,
-        executable=True,
         code="print('{}')",
         verification=VerificationResult(verified=True),
     )
@@ -175,18 +174,46 @@ class TestAgentOrchestrator:
 
         assert run.config.domain_id == "my-domain"
 
-    async def test_full_pipeline_creates_experiment(self, lab):
-        """Orchestrator + StubAgentBackend should create a real experiment."""
+    async def test_full_pipeline_creates_experiment(self, lab, tmp_path):
+        """Phase 4: with a frozen domain + workspace, the stub's run_experiment
+        actually creates an experiment record on disk."""
+        from dojo.core.domain import Workspace
+
+        workspace_dir = tmp_path / "ws"
+        workspace_dir.mkdir()
+
+        domain = await _make_ready_domain(lab)
+        domain.workspace = Workspace(path=str(workspace_dir), ready=True)
+        await lab.domain_store.save(domain)
+
+        # Re-freeze with the workspace set so canonical files are copied to
+        # `.dojo/domains/{id}/tools/` for the runner to import.
+        svc = TaskService(lab)
+        load_code = "def load_data():\n    return [[1.0]], [[2.0]], [1.0], [2.0]\n"
+        eval_code = (
+            "from load_data import load_data\n"
+            "def evaluate(y_pred):\n"
+            "    return {'rmse': 0.0, 'r2': 1.0, 'mae': 0.0}\n"
+        )
+        domain = await lab.domain_store.load(domain.id)
+        domain.task.frozen = False
+        domain.task.tools[0].code = load_code
+        domain.task.tools[0].module_filename = "load_data.py"
+        domain.task.tools[0].entrypoint = "load_data"
+        domain.task.tools[1].code = eval_code
+        domain.task.tools[1].module_filename = "evaluate.py"
+        domain.task.tools[1].entrypoint = "evaluate"
+        await lab.domain_store.save(domain)
+        await svc.freeze(domain.id)
+
         backend = StubAgentBackend()
         orchestrator = AgentOrchestrator(lab, backend)
 
-        run = await orchestrator.start(
-            "pipeline test", domain_id="test-domain", require_ready_task=False
-        )
+        run = await orchestrator.start("pipeline test", domain_id=domain.id)
         await orchestrator.execute(run)
 
         assert run.status == RunStatus.COMPLETED
-        experiments = await lab.experiment_store.list()
+        experiments = await lab.experiment_store.list(domain_id=domain.id)
         assert len(experiments) >= 1
 
     async def test_full_pipeline_event_types(self, lab):

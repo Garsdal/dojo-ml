@@ -432,11 +432,11 @@ These are all reasonable later, none are right *now*.
 - [x] Phase 3 — Tool verification + anti-cheating run gating *(stdout-JSON contract — partially superseded by Phase 4)*
 - [x] Phase 3.5 — Natural-language happy path (PROGRAM.md as the spec)
 - [ ] Phase 4 — Function-based contract + framework-owned evaluation
-  - [ ] 4a — Tools as modules + import-based verifier
-  - [ ] 4b — Canonical tool path on freeze
-  - [ ] 4c — Runner module + `run_experiment` MCP tool
-  - [ ] 4d — System prompt rewrite
-  - [ ] 4e — Cleanup of stranded Phase 3 code
-  - [ ] 4f — Tests
+  - [x] 4a — Tools as modules + import-based verifier
+  - [x] 4b — Canonical tool path on freeze
+  - [x] 4c — Runner module + `run_experiment` MCP tool
+  - [x] 4d — System prompt rewrite
+  - [x] 4e — Cleanup of stranded Phase 3 code
+  - [x] 4f — Tests
   - [ ] 4g — California housing E2E (validation gate)
 - [ ] Phase 5 — Reconnaissance
