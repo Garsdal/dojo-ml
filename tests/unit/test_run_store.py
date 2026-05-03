@@ -94,3 +94,19 @@ async def test_delete(store: LocalRunStore) -> None:
 
 async def test_delete_nonexistent_returns_false(store: LocalRunStore) -> None:
     assert await store.delete("ghost") is False
+
+
+async def test_stop_signal_round_trip(store: LocalRunStore) -> None:
+    run = AgentRun(domain_id="d1", prompt="p")
+    await store.save(run)
+
+    assert await store.is_stop_requested(run.id) is False
+    await store.request_stop(run.id)
+    assert await store.is_stop_requested(run.id) is True
+    await store.clear_stop_request(run.id)
+    assert await store.is_stop_requested(run.id) is False
+
+
+async def test_clear_stop_request_idempotent(store: LocalRunStore) -> None:
+    # Clearing without a prior request must not raise.
+    await store.clear_stop_request("ghost")

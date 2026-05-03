@@ -148,6 +148,88 @@ class TestAgentOrchestrator:
         assert run.status == RunStatus.STOPPED
         assert run.completed_at is not None
 
+    async def test_error_event_after_stop_request_marks_stopped(self, lab):
+        """SIGINT kills the backend's subprocess too — the resulting error
+        event must not flip an in-progress stop into FAILED."""
+        events = [
+            AgentEvent(event_type="tool_call", data={"tool": "run_experiment", "input": {}}),
+            AgentEvent(event_type="error", data={"error": "Command failed with exit code -2"}),
+        ]
+        backend = StubAgentBackend(events=events)
+        orchestrator = AgentOrchestrator(lab, backend)
+
+        run = await orchestrator.start("test", domain_id="test-domain", require_ready_task=False)
+        orchestrator.mark_stop_requested()
+        await orchestrator.execute(run)
+
+        assert run.status == RunStatus.STOPPED
+        assert run.error is None
+        assert run.result is not None
+        assert run.result.num_turns == 1  # one tool_call observed
+
+    async def test_external_stop_signal_triggers_graceful_stop(self, lab):
+        """A stop sentinel written to run_store mid-run should make the
+        orchestrator interrupt the backend and finish in STOPPED."""
+        import asyncio
+
+        from dojo.agents.backend import AgentBackend
+
+        class _SlowBackend(AgentBackend):
+            def __init__(self) -> None:
+                self.stopped = False
+
+            async def configure(self, tool_defs, config):
+                pass
+
+            async def execute(self, prompt: str):
+                # Yield a tool_call event then loop forever until interrupted.
+                yield AgentEvent(event_type="tool_call", data={"tool": "x", "input": {}})
+                while not self.stopped:
+                    await asyncio.sleep(0.05)
+                # Treat the user's stop as a graceful end-of-stream.
+
+            async def stop(self) -> None:
+                self.stopped = True
+
+            @property
+            def name(self) -> str:
+                return "slow"
+
+        backend = _SlowBackend()
+        orchestrator = AgentOrchestrator(lab, backend)
+        run = await orchestrator.start("test", domain_id="test-domain", require_ready_task=False)
+
+        async def _signal_after_a_moment():
+            await asyncio.sleep(1.2)  # slightly above the 1s poll interval
+            await lab.run_store.request_stop(run.id)
+
+        await asyncio.gather(_signal_after_a_moment(), orchestrator.execute(run))
+
+        assert run.status == RunStatus.STOPPED
+        assert backend.stopped is True
+        assert run.error is None
+        # Sentinel must be cleaned up so future runs aren't poisoned.
+        assert await lab.run_store.is_stop_requested(run.id) is False
+
+    async def test_exception_after_stop_request_marks_stopped(self, lab):
+        """If the backend raises (rather than yielding an error event) after a
+        stop was requested, still treat as STOPPED."""
+
+        class _RaisingBackend(StubAgentBackend):
+            async def execute(self, prompt: str):  # type: ignore[override]
+                yield AgentEvent(event_type="tool_call", data={"tool": "x", "input": {}})
+                raise RuntimeError("Command failed with exit code -2")
+
+        orchestrator = AgentOrchestrator(lab, _RaisingBackend())
+        run = await orchestrator.start("test", domain_id="test-domain", require_ready_task=False)
+        orchestrator.mark_stop_requested()
+        await orchestrator.execute(run)
+
+        assert run.status == RunStatus.STOPPED
+        assert run.error is None
+        assert run.result is not None
+        assert run.result.num_turns == 1
+
     async def test_config_respects_params(self, lab):
         backend = StubAgentBackend()
         orchestrator = AgentOrchestrator(

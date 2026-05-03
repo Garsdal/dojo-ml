@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -22,6 +24,10 @@ from dojo.tools.server import collect_all_tools
 from dojo.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+# How often the orchestrator polls run_store for an out-of-process stop signal.
+# 1s feels responsive enough for `dojo stop` while keeping disk noise minimal.
+_STOP_POLL_INTERVAL_S = 1.0
 
 
 class AgentOrchestrator:
@@ -54,6 +60,7 @@ class AgentOrchestrator:
         self.permission_mode = permission_mode
         self.cwd = cwd
         self._run: AgentRun | None = None
+        self._stop_requested = False
 
     async def start(
         self,
@@ -149,6 +156,12 @@ class AgentOrchestrator:
         _PERSIST_EVERY = 10
         _event_count = 0
 
+        # Watch the run_store for out-of-process stop signals (e.g. `dojo stop`
+        # in another terminal). When the sentinel appears we flip our intent
+        # flag and ask the backend to interrupt — the SDK then has a chance to
+        # emit ResultMessage so cost/turn data is preserved.
+        stop_watcher = asyncio.create_task(self._watch_for_stop_signal(run.id))
+
         try:
             async for event in self.backend.execute(run.prompt):
                 run.events.append(event)
@@ -165,10 +178,15 @@ class AgentOrchestrator:
                     await self.lab.run_store.save(run)
                     _event_count = 0
 
-                # Handle error events
+                # Handle error events. A SIGINT to the foreground group kills
+                # the backend's subprocess too, which surfaces here as an error
+                # event — so if a stop was requested, treat it as STOPPED.
                 elif event.event_type == "error" and run.status == RunStatus.RUNNING:
-                    run.status = RunStatus.FAILED
-                    run.error = event.data.get("error", "Unknown error")
+                    if self._stop_requested:
+                        run.status = RunStatus.STOPPED
+                    else:
+                        run.status = RunStatus.FAILED
+                        run.error = event.data.get("error", "Unknown error")
                     await self.lab.run_store.save(run)
                     _event_count = 0
 
@@ -178,30 +196,82 @@ class AgentOrchestrator:
                     _event_count = 0
 
             if run.status == RunStatus.RUNNING:
-                run.status = RunStatus.COMPLETED
+                run.status = RunStatus.STOPPED if self._stop_requested else RunStatus.COMPLETED
+            if run.status == RunStatus.STOPPED and run.result is None:
+                self._populate_partial_result(run)
             run.completed_at = datetime.now(UTC)
             await self.lab.run_store.save(run)
 
         except Exception as e:
-            run.status = RunStatus.FAILED
-            run.error = str(e)
+            if self._stop_requested:
+                run.status = RunStatus.STOPPED
+                if run.result is None:
+                    self._populate_partial_result(run)
+                logger.info("agent_run_stopped", run_id=run.id, error=str(e))
+            else:
+                run.status = RunStatus.FAILED
+                run.error = str(e)
+                logger.error("agent_run_failed", run_id=run.id, error=str(e))
             run.completed_at = datetime.now(UTC)
             await self.lab.run_store.save(run)
-            logger.error("agent_run_failed", run_id=run.id, error=str(e))
+
+        finally:
+            stop_watcher.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await stop_watcher
+            with contextlib.suppress(Exception):
+                await self.lab.run_store.clear_stop_request(run.id)
+
+    async def _watch_for_stop_signal(self, run_id: str) -> None:
+        """Poll the run store for a stop sentinel and trigger a graceful stop.
+
+        Used to honour ``dojo stop`` from a separate terminal. Cancelled by
+        ``execute()``'s finally block once the run terminates for any reason.
+        """
+        while True:
+            await asyncio.sleep(_STOP_POLL_INTERVAL_S)
+            try:
+                requested = await self.lab.run_store.is_stop_requested(run_id)
+            except Exception as e:
+                logger.warning("stop_signal_poll_failed", run_id=run_id, error=str(e))
+                continue
+            if not requested:
+                continue
+            logger.info("stop_signal_received", run_id=run_id)
+            self._stop_requested = True
+            with contextlib.suppress(Exception):
+                await self.backend.stop()
+            return
+
+    def mark_stop_requested(self) -> None:
+        """Sync flag-flip so signal handlers can declare stop intent.
+
+        Why: SIGINT propagates to the backend's subprocess too, surfacing as a
+        backend error event before ``stop()`` can run. ``execute()`` checks this
+        flag to distinguish a user-initiated stop from a real backend failure.
+        Idempotent.
+        """
+        self._stop_requested = True
 
     async def stop(self) -> None:
         """Stop the running agent by interrupting the backend."""
+        self._stop_requested = True
         await self.backend.stop()
         if self._run:
             self._run.status = RunStatus.STOPPED
             self._run.completed_at = datetime.now(UTC)
-            # Build a partial result from events collected so far
             if not self._run.result:
-                tool_calls = sum(1 for e in self._run.events if e.event_type == "tool_call")
-                self._run.result = AgentRunResult(
-                    session_id=None,
-                    num_turns=tool_calls,
-                )
+                self._populate_partial_result(self._run)
+
+    @staticmethod
+    def _populate_partial_result(run: AgentRun) -> None:
+        """Fill run.result from observed events when no ResultMessage arrived.
+
+        Used on stop paths where the backend died before emitting its summary —
+        we lose cost data, but at least record turn count from tool calls.
+        """
+        tool_calls = sum(1 for e in run.events if e.event_type == "tool_call")
+        run.result = AgentRunResult(session_id=None, num_turns=tool_calls)
 
 
 def _result_from_event(event: AgentEvent) -> AgentRunResult:

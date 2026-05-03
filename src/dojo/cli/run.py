@@ -111,7 +111,15 @@ async def _run_async(
 
     console.print(
         f"[green]▶[/green] run [bold]{run_obj.id}[/bold] started "
-        f"on domain [cyan]{d.name}[/cyan] (backend={backend.name})\n"
+        f"on domain [cyan]{d.name}[/cyan] (backend={backend.name})"
+    )
+    console.print(
+        "  [dim]graceful stop:[/dim] [bold]dojo stop[/bold] "
+        "[dim](in another terminal — preserves cost & turn data)[/dim]"
+    )
+    console.print(
+        "  [dim]forceful stop:[/dim] [bold]Ctrl-C[/bold] "
+        "[dim](still recovers knowledge, may lose cost data)[/dim]\n"
     )
 
     if no_watch:
@@ -143,6 +151,11 @@ async def _run_async(
                 "\n[yellow]■[/yellow] stop requested — finishing up (Ctrl-C again to abort cleanup)"
             )
             stop_requested.set()
+            # Flip the orchestrator's intent flag synchronously: SIGINT
+            # propagates to the backend's subprocess too, and the resulting
+            # error event will reach the orchestrator before _graceful_stop
+            # can call stop(). Without this, the run would be marked FAILED.
+            orchestrator.mark_stop_requested()
         else:
             console.print("\n[red]✗[/red] hard stop")
 
@@ -156,7 +169,10 @@ async def _run_async(
         with contextlib.suppress(NotImplementedError):
             loop.remove_signal_handler(signal.SIGINT)
 
-    if stop_requested.is_set() and run_obj.status == RunStatus.RUNNING:
+    # Run cleanup whenever the user asked to stop, even if the backend's
+    # subprocess died first and execute() already transitioned to STOPPED —
+    # we still want knowledge extraction.
+    if stop_requested.is_set() and run_obj.status in (RunStatus.RUNNING, RunStatus.STOPPED):
         await _graceful_stop(orchestrator, run_obj, lab, sigint_count)
         # Drain the execute task so any final writes land before we return.
         with contextlib.suppress(asyncio.CancelledError, Exception):

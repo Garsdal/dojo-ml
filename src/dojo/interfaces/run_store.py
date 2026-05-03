@@ -23,3 +23,20 @@ class RunStore(ABC):
     @abstractmethod
     async def delete(self, run_id: str) -> bool:
         """Delete a run. Returns True if it existed."""
+
+    @abstractmethod
+    async def request_stop(self, run_id: str) -> None:
+        """Drop a stop-signal sentinel that an active orchestrator can poll.
+
+        Cross-process signalling for the foreground ``dojo run`` case: the
+        process running ``execute()`` polls ``is_stop_requested`` and triggers
+        a graceful interrupt when the sentinel appears.
+        """
+
+    @abstractmethod
+    async def is_stop_requested(self, run_id: str) -> bool:
+        """True iff a stop signal has been raised for this run."""
+
+    @abstractmethod
+    async def clear_stop_request(self, run_id: str) -> None:
+        """Remove the stop-signal sentinel (called once it's been honoured)."""

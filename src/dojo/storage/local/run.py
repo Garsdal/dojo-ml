@@ -29,6 +29,9 @@ class LocalRunStore(RunStore):
     def _path(self, run_id: str) -> Path:
         return self.base_dir / f"{run_id}.json"
 
+    def _stop_path(self, run_id: str) -> Path:
+        return self.base_dir / f"{run_id}.stop"
+
     async def save(self, run: AgentRun) -> str:
         self._path(run.id).write_text(to_json(run))
         return run.id
@@ -56,6 +59,17 @@ class LocalRunStore(RunStore):
             path.unlink()
             return True
         return False
+
+    async def request_stop(self, run_id: str) -> None:
+        self._stop_path(run_id).write_text("")
+
+    async def is_stop_requested(self, run_id: str) -> bool:
+        return self._stop_path(run_id).exists()
+
+    async def clear_stop_request(self, run_id: str) -> None:
+        path = self._stop_path(run_id)
+        if path.exists():
+            path.unlink()
 
     # --- Deserialization ---
 
