@@ -373,7 +373,11 @@ def _build_fixtures(
         if source_key not in upstream:
             return None
         fixtures[param] = upstream[source_key]
-    return fixtures
+    # Truncate list fixtures before they are repr()'d into the verifier script
+    # source. The verifier only checks that the function accepts the params and
+    # returns the right keys — full-size dataset arrays embedded as Python
+    # literals cause the subprocess to be killed (OOM) on large datasets.
+    return {k: v[:5] if isinstance(v, list) else v for k, v in fixtures.items()}
 
 
 def _build_verifier_runner(
