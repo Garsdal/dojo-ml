@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 class VerificationResult:
     """Outcome of running a tool against its ToolContract.
 
-    Populated by `runtime.tool_verifier.ToolVerifier` after generation.
+    Populated by `runtime.tool_verifier.verify_required_tools` after generation.
     Persisted with the tool — `frozen=True` is only allowed when every required
     tool has `verification.verified is True`.
     """

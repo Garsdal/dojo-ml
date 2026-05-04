@@ -1,4 +1,4 @@
-"""ToolVerifier — runs all required tools for a task in a single subprocess.
+"""verify_required_tools — runs all required tools for a task in a single subprocess.
 
 Design:
 - One combined subprocess per task-type verification (not one per tool).
