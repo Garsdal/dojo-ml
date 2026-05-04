@@ -125,6 +125,17 @@ Domain: {domain_name}
   `load_data` so subsequent calls are fast. The verifier reuses the same
   module directory across runs, so the cache persists.
 
+## Artifacts
+- The framework provides a per-run directory via the env var
+  ``DOJO_ARTIFACTS_DIR``. Use it for any files you produce — plots, model
+  checkpoints, intermediate CSVs.
+- Read it as ``Path(os.environ["DOJO_ARTIFACTS_DIR"])``.
+- Do **not** write to a relative ``artifacts/`` directory or anywhere else
+  in the workspace — those paths are shared across experiments and the
+  framework will not capture them. Files written under
+  ``DOJO_ARTIFACTS_DIR`` are auto-registered into the artifact store and
+  forwarded to the tracking backend.
+
 ## Output: exactly two Python modules
 
 The framework imports these modules and calls the named functions. The agent's
