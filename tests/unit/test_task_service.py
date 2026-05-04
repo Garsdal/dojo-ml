@@ -3,7 +3,7 @@
 import pytest
 
 from dojo.core.domain import DomainTool, ToolType, VerificationResult
-from dojo.core.task import TaskType
+from dojo.core.task import TASK_TYPE_REGISTRY, TaskType
 from dojo.runtime.task_service import (
     TaskFrozenError,
     TaskNotReadyError,
@@ -205,6 +205,7 @@ async def test_assert_ready_unverified_tools(lab) -> None:
     svc = TaskService(lab)
     task = await svc.create(domain.id)
     task.frozen = True  # Pretend it was force-frozen
+    task.config["contract_version"] = TASK_TYPE_REGISTRY[task.type].contract_version
 
     with pytest.raises(TaskNotReadyError, match="unverified"):
         svc.assert_ready(domain.id, task)

@@ -135,6 +135,10 @@ class TaskService:
         if hashes:
             domain.task.config["tool_hashes"] = hashes
 
+        spec = TASK_TYPE_REGISTRY.get(domain.task.type)
+        if spec is not None:
+            domain.task.config["contract_version"] = spec.contract_version
+
         domain.task.frozen = True
         domain.task.updated_at = datetime.now(UTC)
         domain.updated_at = datetime.now(UTC)
@@ -196,6 +200,16 @@ class TaskService:
                 f"Domain {domain_id!r} task is not frozen. "
                 "Freeze it with `dojo task freeze` or POST /domains/{id}/task/freeze."
             )
+        spec = TASK_TYPE_REGISTRY.get(task.type)
+        if spec is not None:
+            stored = task.config.get("contract_version")
+            if stored != spec.contract_version:
+                raise TaskNotReadyError(
+                    f"Domain {domain_id!r} task was frozen against "
+                    f"contract version {stored!r}, but the current contract is "
+                    f"version {spec.contract_version}. Re-verify and re-freeze: "
+                    f"`dojo task generate` then `dojo task freeze`."
+                )
         errors = _verification_errors(task)
         if errors:
             raise TaskNotReadyError(

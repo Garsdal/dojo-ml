@@ -265,7 +265,7 @@ TASK_TYPE_REGISTRY: ClassVar[dict[TaskType, TaskTypeSpec]] = {
                 "y_test": "y_test",
             },
         },
-        contract_version=1,
+        contract_version=2,
         train_output_description="a flat list of float predictions for the test set, in the same order as X_test from load_data()",
     ),
 }
