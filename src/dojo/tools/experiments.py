@@ -96,6 +96,8 @@ def create_experiment_tools(lab: LabEnvironment) -> list[ToolDef]:
         canonical_dir = task_service.canonical_tools_dir(domain_id)
         runs_dir = task_service.runs_dir(domain_id, experiment_id)
         runs_dir.mkdir(parents=True, exist_ok=True)
+        artifacts_dir = runs_dir / "artifacts"
+        artifacts_dir.mkdir(parents=True, exist_ok=True)
 
         # 2a. Persist train code as an artifact (provenance).
         artifact_path = f"experiments/{experiment_id}/{artifact_filename}"
@@ -115,11 +117,13 @@ def create_experiment_tools(lab: LabEnvironment) -> list[ToolDef]:
         #    agent's train code can do relative imports / file paths against
         #    the user's repo unchanged.
         ws = domain.workspace
+        env_vars = dict(ws.env_vars or {})
+        env_vars["DOJO_ARTIFACTS_DIR"] = str(artifacts_dir)
         exec_result = await lab.sandbox.execute(
             runner_code,
             cwd=str(workspace_path),
             python_path=ws.python_path,
-            env_vars=ws.env_vars or None,
+            env_vars=env_vars,
             name="__dojo_runner",
             script_dir=str(runs_dir),
         )
