@@ -49,6 +49,4 @@ async def test_artifact_paths_round_trip_through_local_experiment_store(tmp_path
     assert loaded is not None
     assert loaded.result is not None
     assert len(loaded.result.code_runs) == 1
-    assert loaded.result.code_runs[0].artifact_paths == [
-        "experiments/abc/artifacts/plot.html"
-    ]
+    assert loaded.result.code_runs[0].artifact_paths == ["experiments/abc/artifacts/plot.html"]
