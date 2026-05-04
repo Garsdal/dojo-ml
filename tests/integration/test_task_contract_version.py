@@ -66,6 +66,39 @@ async def test_assert_ready_rejects_stale_contract_version(lab, tmp_path):
         service.assert_ready(domain.id, domain.task)
 
 
+async def test_assert_ready_accepts_current_contract_version(lab, tmp_path):
+    """Positive case: a task frozen against the current spec passes the gate."""
+    from dojo.core.domain import VerificationResult
+
+    domain = _domain(tmp_path)
+    Path(domain.workspace.path).mkdir(parents=True, exist_ok=True)
+    await lab.domain_store.save(domain)
+
+    service = TaskService(lab)
+    await service.create(domain.id, task_type=TaskType.REGRESSION)
+    domain = await lab.domain_store.load(domain.id)
+    domain.task.tools = [
+        DomainTool(
+            name="load_data",
+            module_filename="load_data.py",
+            code="x",
+            verification=VerificationResult(verified=True),
+        ),
+        DomainTool(
+            name="evaluate",
+            module_filename="evaluate.py",
+            code="x",
+            verification=VerificationResult(verified=True),
+        ),
+    ]
+    await lab.domain_store.save(domain)
+    await service.freeze(domain.id, skip_verification=True)
+
+    domain = await lab.domain_store.load(domain.id)
+    # No raise — current contract version + verified tools + no tamper.
+    service.assert_ready(domain.id, domain.task)
+
+
 async def test_assert_ready_treats_missing_contract_version_as_stale(lab, tmp_path):
     domain = _domain(tmp_path)
     Path(domain.workspace.path).mkdir(parents=True, exist_ok=True)

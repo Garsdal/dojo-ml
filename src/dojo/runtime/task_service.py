@@ -207,8 +207,8 @@ class TaskService:
                 raise TaskNotReadyError(
                     f"Domain {domain_id!r} task was frozen against "
                     f"contract version {stored!r}, but the current contract is "
-                    f"version {spec.contract_version}. Re-verify and re-freeze: "
-                    f"`dojo task generate` then `dojo task freeze`."
+                    f"version {spec.contract_version}. Regenerate, re-verify, "
+                    f"and re-freeze: `dojo task generate` then `dojo task freeze`."
                 )
         errors = _verification_errors(task)
         if errors:
