@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from dojo.core.domain import DomainTool, VerificationResult, Workspace
-from dojo.core.task import TASK_TYPE_REGISTRY, Task, TaskType, ToolContract
+from dojo.core.task import TASK_TYPE_REGISTRY, Task, ToolContract
 from dojo.interfaces.sandbox import Sandbox
 from dojo.utils.logging import get_logger
 
@@ -309,7 +309,7 @@ async def _verify_in_dir(
         if tool is None:
             continue
 
-        upstream = _upstream_dep(task.type, contract.name)
+        upstream = _upstream_dep(spec, contract.name)
         if upstream and upstream in failed_upstream:
             tool.verification = VerificationResult(
                 verified=False,
@@ -321,7 +321,7 @@ async def _verify_in_dir(
             failed_upstream.add(contract.name)
             continue
 
-        fixtures = _build_fixtures(task.type, contract.name, raw_outputs)
+        fixtures = _build_fixtures(spec, contract.name, raw_outputs)
         raw: dict[str, Any] = {}
         result = await verifier.verify(
             tool,
@@ -338,30 +338,43 @@ async def _verify_in_dir(
             failed_upstream.add(contract.name)
 
 
-def _upstream_dep(task_type: TaskType, tool_name: str) -> str | None:
-    """Return the upstream tool whose output `tool_name` depends on, if any."""
-    if task_type == TaskType.REGRESSION and tool_name == "evaluate":
-        return "load_data"
-    return None
+def _upstream_dep(spec: Any, tool_name: str) -> str | None:
+    """Return the upstream tool whose output `tool_name` depends on, if any.
+
+    A tool depends on its upstream when ``verifier_fixture_keys[tool_name]``
+    is non-empty — every fixture key is sourced from a previously-verified
+    tool's output. Today every spec has a single upstream (``load_data``).
+    """
+    keys = spec.verifier_fixture_keys.get(tool_name) or {}
+    if not keys:
+        return None
+    return "load_data"
 
 
 def _build_fixtures(
-    task_type: TaskType,
+    spec: Any,
     tool_name: str,
     raw_outputs: dict[str, dict[str, Any]],
 ) -> dict[str, Any] | None:
-    """Pick fixtures for a tool based on previously-verified tools' outputs.
+    """Map an upstream tool's outputs into fixtures for the current tool.
 
-    Regression: `evaluate(y_pred)` needs ``y_pred``. We use ``y_test`` from
-    ``load_data`` as a perfect-prediction fixture — if the contract is right
-    and the tool's code is right, evaluate's output should still match the
-    returns_schema.
+    Mapping: ``TaskTypeSpec.verifier_fixture_keys[tool_name]`` =
+    ``{contract_param: load_data_output_key}``. For regression's evaluate,
+    ``y_pred`` is sourced from ``y_test`` (perfect-prediction fixture).
+    Returns None when no mapping or the upstream output is missing.
     """
-    if task_type == TaskType.REGRESSION and tool_name == "evaluate":
-        load = raw_outputs.get("load_data")
-        if load and isinstance(load.get("y_test"), list):
-            return {"y_pred": load["y_test"]}
-    return None
+    mapping = spec.verifier_fixture_keys.get(tool_name)
+    if not mapping:
+        return None
+    upstream = raw_outputs.get("load_data")
+    if upstream is None:
+        return None
+    fixtures: dict[str, Any] = {}
+    for param, source_key in mapping.items():
+        if source_key not in upstream:
+            return None
+        fixtures[param] = upstream[source_key]
+    return fixtures
 
 
 def _build_verifier_runner(
