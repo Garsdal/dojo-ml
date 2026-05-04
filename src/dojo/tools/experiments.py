@@ -130,6 +130,11 @@ def create_experiment_tools(lab: LabEnvironment) -> list[ToolDef]:
 
         # 4. Record the CodeRun before deciding success/failure so the artifact
         #    trail is complete even when the runner crashes.
+        ingested = await _ingest_artifacts(
+            lab=lab,
+            experiment_id=experiment_id,
+            artifacts_dir=artifacts_dir,
+        )
         experiment.result.code_runs.append(
             CodeRun(
                 run_number=run_number,
@@ -138,6 +143,7 @@ def create_experiment_tools(lab: LabEnvironment) -> list[ToolDef]:
                 exit_code=exec_result.exit_code,
                 duration_ms=exec_result.duration_ms,
                 timestamp=datetime.now(UTC),
+                artifact_paths=ingested,
             )
         )
 
@@ -288,6 +294,48 @@ def create_experiment_tools(lab: LabEnvironment) -> list[ToolDef]:
             handler=compare_experiments,
         ),
     ]
+
+
+async def _ingest_artifacts(
+    *,
+    lab: LabEnvironment,
+    experiment_id: str,
+    artifacts_dir: Path,
+) -> list[str]:
+    """Walk the per-run artifacts dir, register each file with ArtifactStore,
+    and forward to the tracking connector. Returns the list of stored
+    artifact keys (suitable for CodeRun.artifact_paths). Failures are logged
+    and swallowed so artifact-ingestion problems never fail the run.
+    """
+    paths: list[str] = []
+    if not artifacts_dir.exists():
+        return paths
+    for file in sorted(artifacts_dir.rglob("*")):
+        if not file.is_file():
+            continue
+        relative = file.relative_to(artifacts_dir).as_posix()
+        key = f"experiments/{experiment_id}/artifacts/{relative}"
+        try:
+            await lab.artifact_store.save(key, file.read_bytes())
+        except Exception as exc:
+            logger.warning(
+                "artifact_ingest_failed",
+                experiment_id=experiment_id,
+                file=str(file),
+                error=str(exc),
+            )
+            continue
+        paths.append(key)
+        try:
+            await lab.tracking.log_artifact(experiment_id, str(file))
+        except Exception as exc:
+            logger.warning(
+                "artifact_track_failed",
+                experiment_id=experiment_id,
+                file=str(file),
+                error=str(exc),
+            )
+    return paths
 
 
 async def _finalise_experiment(
