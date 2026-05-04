@@ -99,7 +99,7 @@ class StubAgentBackend(AgentBackend):
         run_params = {
             "domain_id": domain_id,
             "hypothesis": f"Stub hypothesis for: {prompt}",
-            "train_code": "def train():\n    return [0.0]\n",
+            "train_code": "def train(X_train, y_train, X_test):\n    return [0.0]\n",
         }
         yield AgentEvent(
             event_type="tool_call",

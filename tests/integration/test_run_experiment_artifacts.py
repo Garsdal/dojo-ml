@@ -24,10 +24,7 @@ _LOAD_DATA = textwrap.dedent(
 
 _EVALUATE = textwrap.dedent(
     """
-    from load_data import load_data
-
-    def evaluate(y_pred):
-        _, _, _, y_test = load_data()
+    def evaluate(y_pred, *, X_train, X_test, y_train, y_test):
         diffs = [abs(a - b) for a, b in zip(y_test, y_pred)]
         mae = sum(diffs) / len(diffs)
         return {"rmse": mae, "r2": 0.0, "mae": mae}
@@ -39,7 +36,7 @@ _TRAIN = textwrap.dedent(
     import os
     from pathlib import Path
 
-    def train():
+    def train(X_train, y_train, X_test):
         artifacts = Path(os.environ["DOJO_ARTIFACTS_DIR"])
         (artifacts / "evaluation_summary.html").write_text("<html>ok</html>")
         return [4.0, 5.0]

@@ -27,11 +27,9 @@ def load_data():
 
 _EVALUATE = """\
 import math
-from load_data import load_data
 
 
-def evaluate(y_pred):
-    _, _, _, y_test = load_data()
+def evaluate(y_pred, *, X_train, X_test, y_train, y_test):
     diffs = [a - b for a, b in zip(y_pred, y_test)]
     mse = sum(d * d for d in diffs) / len(diffs)
     mae = sum(abs(d) for d in diffs) / len(diffs)
@@ -93,7 +91,9 @@ async def test_phase4_surface_only_exposes_four_tools(lab):
 
 async def test_run_experiment_completes_with_metrics(lab, ready_domain):
     tools = _tools_by_name(lab)
-    train_code = "def train():\n    return [2.0]\n"  # perfect — y_test == [2.0]
+    train_code = (
+        "def train(X_train, y_train, X_test):\n    return [2.0]\n"  # perfect — y_test == [2.0]
+    )
 
     result = await tools["run_experiment"].handler(
         {
@@ -117,7 +117,7 @@ async def test_run_experiment_completes_with_metrics(lab, ready_domain):
 
 async def test_run_experiment_fails_when_train_raises(lab, ready_domain):
     tools = _tools_by_name(lab)
-    train_code = "def train():\n    raise RuntimeError('boom')\n"
+    train_code = "def train(X_train, y_train, X_test):\n    raise RuntimeError('boom')\n"
 
     result = await tools["run_experiment"].handler(
         {
@@ -190,7 +190,7 @@ async def test_run_experiment_logs_to_tracking(lab, ready_domain):
         {
             "domain_id": ready_domain.id,
             "hypothesis": "constant",
-            "train_code": "def train():\n    return [2.0]\n",
+            "train_code": "def train(X_train, y_train, X_test):\n    return [2.0]\n",
         }
     )
     assert result.data["status"] == "completed"
