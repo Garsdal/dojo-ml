@@ -268,9 +268,13 @@ async def _do_generate(
         effective_timeout = (
             timeout if timeout is not None else lab.settings.sandbox.verification_timeout
         )
+        console.print(
+            "[dim]note: verification runs load_data in full — first-time data downloads "
+            "and cache builds happen here (this can take several minutes)[/dim]"
+        )
         with console.status(
             f"[bold]verifying tools against the regression contract "
-            f"(timeout {effective_timeout:.0f}s)...[/bold]",
+            f"(timeout {effective_timeout:.0f}s) — running load_data first...[/bold]",
             spinner="dots",
         ):
             await verify_required_tools(
