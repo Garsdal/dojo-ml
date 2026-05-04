@@ -341,14 +341,10 @@ async def _verify_in_dir(
 def _upstream_dep(spec: Any, tool_name: str) -> str | None:
     """Return the upstream tool whose output `tool_name` depends on, if any.
 
-    A tool depends on its upstream when ``verifier_fixture_keys[tool_name]``
-    is non-empty — every fixture key is sourced from a previously-verified
-    tool's output. Today every spec has a single upstream (``load_data``).
+    The upstream name comes from ``TaskTypeSpec.verifier_dependencies[tool_name]``
+    so adding a new task type is a registry-only change — no hardcoded names here.
     """
-    keys = spec.verifier_fixture_keys.get(tool_name) or {}
-    if not keys:
-        return None
-    return "load_data"
+    return spec.verifier_dependencies.get(tool_name)
 
 
 def _build_fixtures(
@@ -358,15 +354,18 @@ def _build_fixtures(
 ) -> dict[str, Any] | None:
     """Map an upstream tool's outputs into fixtures for the current tool.
 
-    Mapping: ``TaskTypeSpec.verifier_fixture_keys[tool_name]`` =
-    ``{contract_param: load_data_output_key}``. For regression's evaluate,
-    ``y_pred`` is sourced from ``y_test`` (perfect-prediction fixture).
-    Returns None when no mapping or the upstream output is missing.
+    Mapping comes from ``verifier_fixture_keys[tool_name]`` (param -> source key);
+    the upstream tool name comes from ``verifier_dependencies[tool_name]``.
+    Returns None when no mapping, no dependency declared, or the upstream output
+    is missing.
     """
     mapping = spec.verifier_fixture_keys.get(tool_name)
     if not mapping:
         return None
-    upstream = raw_outputs.get("load_data")
+    upstream_name = spec.verifier_dependencies.get(tool_name)
+    if upstream_name is None:
+        return None
+    upstream = raw_outputs.get(upstream_name)
     if upstream is None:
         return None
     fixtures: dict[str, Any] = {}

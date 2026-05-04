@@ -29,3 +29,21 @@ def test_build_fixtures_returns_none_when_upstream_missing():
     spec = TASK_TYPE_REGISTRY[TaskType.REGRESSION]
     fixtures = _build_fixtures(spec, "evaluate", {})  # no load_data outputs
     assert fixtures is None
+
+
+def test_build_fixtures_returns_none_when_spec_has_no_dependency():
+    """Without verifier_dependencies entry, the tool has no upstream."""
+    from dojo.core.task import Direction, TaskTypeSpec
+
+    bare = TaskTypeSpec(
+        default_metric="m",
+        default_direction=Direction.MINIMIZE,
+        required_tools=[],
+        generation_prompt_template="",
+        config_schema={},
+        runner_callsite="",
+        verifier_fixture_keys={"some_tool": {"x": "y"}},
+        contract_version=1,
+    )
+    fixtures = _build_fixtures(bare, "some_tool", {"some_other_tool": {"y": 42}})
+    assert fixtures is None  # no dependency declared, even though fixture mapping exists

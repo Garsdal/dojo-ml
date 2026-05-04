@@ -34,6 +34,7 @@ def render_runner(
     workspace_dir: str,
     callsite: str,
     train_dir: str | None = None,
+    prelude: str = "",
 ) -> str:
     """Render the runner script as a module string.
 
@@ -42,14 +43,21 @@ def render_runner(
     ``TaskTypeSpec.runner_callsite`` so future task types are a registry-only
     addition.
 
+    The ``prelude`` is zero or more Python lines rendered inside the ``try``
+    block, immediately before ``callsite``. For regression this imports and
+    calls ``load_data``; task types that don't need a data-loading step leave
+    it empty. Comes from ``TaskTypeSpec.runner_prelude``.
+
     sys.path priority (last-inserted wins):
       1. ``train_dir`` — where the per-experiment ``__dojo_train.py`` lives.
-      2. ``canonical_dir`` — frozen ``load_data`` / ``evaluate`` tools.
+      2. ``canonical_dir`` — frozen ``evaluate`` tools (and ``load_data`` when
+         the task type uses one).
       3. ``workspace_dir`` — the user's repo, for their own imports.
     """
     extra_paths = ""
     if train_dir is not None:
         extra_paths = f"sys.path.insert(0, {train_dir!r})\n"
+    prelude_lines = f"    {prelude}\n" if prelude else ""
     return f"""\
 import json, sys, traceback
 sys.path.insert(0, {workspace_dir!r})
@@ -57,10 +65,8 @@ sys.path.insert(0, {canonical_dir!r})
 {extra_paths}
 try:
     from {train_module} import train
-    from load_data import load_data
     from evaluate import evaluate
-    X_train, X_test, y_train, y_test = load_data()
-    {callsite}
+{prelude_lines}    {callsite}
     print({METRICS_MARKER!r} + json.dumps(metrics))
 except Exception as e:
     print({ERROR_MARKER!r} + json.dumps({{

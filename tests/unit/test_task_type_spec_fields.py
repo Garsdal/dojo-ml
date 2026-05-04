@@ -56,3 +56,14 @@ def test_regression_prompt_describes_train_signature():
     spec = TASK_TYPE_REGISTRY[TaskType.REGRESSION]
     prompt = spec.generation_prompt_template
     assert "train(X_train, y_train, X_test)" in prompt
+
+
+def test_regression_spec_runner_prelude_imports_load_data():
+    spec = TASK_TYPE_REGISTRY[TaskType.REGRESSION]
+    assert "from load_data import load_data" in spec.runner_prelude
+    assert "X_train, X_test, y_train, y_test = load_data()" in spec.runner_prelude
+
+
+def test_regression_spec_verifier_dependencies_maps_evaluate_to_load_data():
+    spec = TASK_TYPE_REGISTRY[TaskType.REGRESSION]
+    assert spec.verifier_dependencies.get("evaluate") == "load_data"

@@ -106,3 +106,29 @@ def test_render_runner_uses_provided_callsite_literal():
         callsite=custom,
     )
     assert custom in code
+
+
+def test_render_runner_inlines_prelude_before_callsite():
+    code = render_runner(
+        train_module="__dojo_train",
+        canonical_dir="/canon",
+        workspace_dir="/ws",
+        prelude="from foo import bar\n    baz = bar()",
+        callsite="metrics = baz()",
+    )
+    assert "from foo import bar" in code
+    assert "baz = bar()" in code
+    # Prelude must precede callsite
+    assert code.index("baz = bar()") < code.index("metrics = baz()")
+
+
+def test_render_runner_omits_load_data_when_no_prelude():
+    """Default prelude is empty — runner does not assume load_data exists."""
+    code = render_runner(
+        train_module="__dojo_train",
+        canonical_dir="/canon",
+        workspace_dir="/ws",
+        callsite="metrics = {'rmse': 0.0, 'r2': 0.0, 'mae': 0.0}",
+    )
+    assert "from load_data import load_data" not in code
+    assert "X_train, X_test, y_train, y_test" not in code

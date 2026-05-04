@@ -113,6 +113,7 @@ def create_experiment_tools(lab: LabEnvironment) -> list[ToolDef]:
             workspace_dir=str(workspace_path),
             train_dir=str(runs_dir),
             callsite=spec.runner_callsite,
+            prelude=spec.runner_prelude,
         )
 
         # 3. Execute the runner from the runs dir (so its script lands there,

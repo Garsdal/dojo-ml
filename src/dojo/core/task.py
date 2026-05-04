@@ -63,6 +63,10 @@ class TaskTypeSpec:
     verifier_fixture_keys: dict[str, dict[str, str]]
     contract_version: int
     train_output_description: str = ""  # what `def train()` must return
+    runner_prelude: str = ""  # Python lines rendered into the runner BEFORE the callsite
+    verifier_dependencies: dict[str, str] = field(
+        default_factory=dict
+    )  # tool_name -> upstream tool name
 
 
 @dataclass
@@ -267,5 +271,9 @@ TASK_TYPE_REGISTRY: ClassVar[dict[TaskType, TaskTypeSpec]] = {
         },
         contract_version=2,
         train_output_description="a flat list of float predictions for the test set, in the same order as X_test from load_data()",
+        runner_prelude=(
+            "from load_data import load_data\n    X_train, X_test, y_train, y_test = load_data()"
+        ),
+        verifier_dependencies={"evaluate": "load_data"},
     ),
 }
