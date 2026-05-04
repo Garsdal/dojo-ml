@@ -73,6 +73,7 @@ class LocalExperimentStore(ExperimentStore):
                     timestamp=datetime.fromisoformat(cr["timestamp"])
                     if "timestamp" in cr
                     else datetime.now(),
+                    artifact_paths=cr.get("artifact_paths", []),
                 )
                 for cr in code_runs_data
             ]
