@@ -60,13 +60,10 @@ class TaskTypeSpec:
     generation_prompt_template: str
     config_schema: dict[str, Any]  # which Task.config fields are required/optional
     runner_callsite: str
-    verifier_fixture_keys: dict[str, dict[str, str]]
+    verifier_script: str
     contract_version: int
     train_output_description: str = ""  # what `def train()` must return
     runner_prelude: str = ""  # Python lines rendered into the runner BEFORE the callsite
-    verifier_dependencies: dict[str, str] = field(
-        default_factory=dict
-    )  # tool_name -> upstream tool name
 
 
 @dataclass
@@ -199,6 +196,88 @@ Output format (respond with ONLY this JSON, no markdown):
 ]
 """
 
+_REGRESSION_VERIFIER = """\
+import json, sys, traceback
+from pathlib import Path
+
+_HERE = Path(__file__).parent
+sys.path.insert(0, str(_HERE))
+
+_TOOL_RESULT = "__DOJO_TOOL_RESULT__:"
+_TOOL_ERROR = "__DOJO_TOOL_ERROR__:"
+
+
+def _brief(value, n=3):
+    \"\"\"Return a JSON-safe summary of value for the result marker.\"\"\"
+    if hasattr(value, "tolist") and callable(value.tolist):
+        try:
+            lst = value.tolist()
+            return {"type": "array", "len": len(lst), "head": lst[:n]}
+        except Exception:
+            pass
+    if hasattr(value, "to_numpy") and callable(value.to_numpy):
+        try:
+            lst = value.to_numpy().tolist()
+            return {"type": "array", "len": len(lst), "head": lst[:n]}
+        except Exception:
+            pass
+    if isinstance(value, (list, tuple)):
+        return {"type": "list", "len": len(value), "head": list(value)[:n]}
+    if isinstance(value, dict):
+        return {k: _brief(v, n) for k, v in list(value.items())[:5]}
+    if isinstance(value, (bool, int, float, str)) or value is None:
+        return value
+    return str(type(value).__name__)
+
+
+# ── Step 1: load_data ────────────────────────────────────────────────────────
+
+try:
+    from load_data import load_data as _load_data
+    _result = _load_data()
+    if not (isinstance(_result, (list, tuple)) and len(_result) == 4):
+        raise ValueError(
+            f"load_data must return a 4-tuple (X_train, X_test, y_train, y_test), "
+            f"got {type(_result).__name__} with "
+            f"{'length ' + str(len(_result)) if hasattr(_result, '__len__') else 'no length'}"
+        )
+    X_train, X_test, y_train, y_test = _result
+    print(_TOOL_RESULT + json.dumps({"tool": "load_data", "sample": {
+        "X_train": _brief(X_train),
+        "X_test":  _brief(X_test),
+        "y_train": _brief(y_train),
+        "y_test":  _brief(y_test),
+    }}))
+except Exception as _e:
+    print(_TOOL_ERROR + json.dumps({
+        "tool": "load_data",
+        "type": type(_e).__name__,
+        "message": str(_e),
+        "traceback": traceback.format_exc(),
+    }))
+    sys.exit(1)
+
+
+# ── Step 2: evaluate ─────────────────────────────────────────────────────────
+
+try:
+    from evaluate import evaluate as _evaluate
+    _metrics = _evaluate(y_test, X_train=X_train, X_test=X_test, y_train=y_train, y_test=y_test)
+    if not isinstance(_metrics, dict):
+        raise ValueError(
+            f"evaluate must return a dict, got {type(_metrics).__name__}"
+        )
+    print(_TOOL_RESULT + json.dumps({"tool": "evaluate", "sample": _brief(_metrics)}))
+except Exception as _e:
+    print(_TOOL_ERROR + json.dumps({
+        "tool": "evaluate",
+        "type": type(_e).__name__,
+        "message": str(_e),
+        "traceback": traceback.format_exc(),
+    }))
+    sys.exit(1)
+"""
+
 TASK_TYPE_REGISTRY: ClassVar[dict[TaskType, TaskTypeSpec]] = {
     TaskType.REGRESSION: TaskTypeSpec(
         default_metric="rmse",
@@ -260,20 +339,11 @@ TASK_TYPE_REGISTRY: ClassVar[dict[TaskType, TaskTypeSpec]] = {
             "y_train=y_train, "
             "y_test=y_test)"
         ),
-        verifier_fixture_keys={
-            "evaluate": {
-                "y_pred": "y_test",
-                "X_train": "X_train",
-                "X_test": "X_test",
-                "y_train": "y_train",
-                "y_test": "y_test",
-            },
-        },
+        verifier_script=_REGRESSION_VERIFIER,
         contract_version=2,
         train_output_description="a flat list of float predictions for the test set, in the same order as X_test from load_data()",
         runner_prelude=(
             "from load_data import load_data\n    X_train, X_test, y_train, y_test = load_data()"
         ),
-        verifier_dependencies={"evaluate": "load_data"},
     ),
 }

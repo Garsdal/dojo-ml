@@ -1,4 +1,4 @@
-"""TaskTypeSpec exposes runner_callsite, verifier_fixture_keys, contract_version."""
+"""TaskTypeSpec exposes runner_callsite, verifier_script, contract_version."""
 
 from dojo.core.task import TASK_TYPE_REGISTRY, TaskType
 
@@ -7,12 +7,6 @@ def test_regression_spec_has_runner_callsite_using_evaluate_train():
     spec = TASK_TYPE_REGISTRY[TaskType.REGRESSION]
     assert "evaluate(" in spec.runner_callsite
     assert "train(" in spec.runner_callsite
-
-
-def test_regression_spec_has_verifier_fixture_keys_for_evaluate():
-    spec = TASK_TYPE_REGISTRY[TaskType.REGRESSION]
-    assert "evaluate" in spec.verifier_fixture_keys
-    assert "y_pred" in spec.verifier_fixture_keys["evaluate"]
 
 
 def test_regression_spec_has_contract_version():
@@ -36,15 +30,6 @@ def test_regression_runner_callsite_passes_data_to_train_and_evaluate():
     assert "y_test=y_test" in callsite
 
 
-def test_regression_verifier_fixture_keys_cover_extended_evaluate_params():
-    spec = TASK_TYPE_REGISTRY[TaskType.REGRESSION]
-    keys = spec.verifier_fixture_keys["evaluate"]
-    for param in ["y_pred", "X_train", "X_test", "y_train", "y_test"]:
-        assert param in keys
-    assert keys["y_pred"] == "y_test"
-    assert keys["X_train"] == "X_train"
-
-
 def test_regression_prompt_specifies_new_evaluate_signature():
     spec = TASK_TYPE_REGISTRY[TaskType.REGRESSION]
     prompt = spec.generation_prompt_template
@@ -64,6 +49,9 @@ def test_regression_spec_runner_prelude_imports_load_data():
     assert "X_train, X_test, y_train, y_test = load_data()" in spec.runner_prelude
 
 
-def test_regression_spec_verifier_dependencies_maps_evaluate_to_load_data():
+def test_regression_spec_has_verifier_script():
     spec = TASK_TYPE_REGISTRY[TaskType.REGRESSION]
-    assert spec.verifier_dependencies.get("evaluate") == "load_data"
+    assert "load_data" in spec.verifier_script
+    assert "evaluate" in spec.verifier_script
+    assert "__DOJO_TOOL_RESULT__" in spec.verifier_script
+    assert "__DOJO_TOOL_ERROR__" in spec.verifier_script

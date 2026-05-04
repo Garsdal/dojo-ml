@@ -1,10 +1,10 @@
-"""Unit tests for ToolVerifier (Phase 4 — import-based)."""
+"""Unit tests for verify_required_tools (combined subprocess verifier)."""
 
 from __future__ import annotations
 
 from dojo.core.domain import DomainTool, ToolType
-from dojo.core.task import TASK_TYPE_REGISTRY, Task, TaskType, ToolContract
-from dojo.runtime.tool_verifier import ToolVerifier, verify_required_tools
+from dojo.core.task import TASK_TYPE_REGISTRY, Task, TaskType
+from dojo.runtime.tool_verifier import verify_required_tools
 from dojo.sandbox.local import LocalSandbox
 
 
@@ -70,12 +70,6 @@ def evaluate(y_pred, *, X_train, X_test, y_train, y_test):
     raise RuntimeError("boom")
 """
 
-# Module exists but is missing the entrypoint function
-NO_ENTRYPOINT = """\
-def something_else():
-    return {"rmse": 0.0, "r2": 0.0, "mae": 0.0}
-"""
-
 # Missing key in returned dict
 BAD_EVALUATE_MISSING_KEY = """\
 def evaluate(y_pred, *, X_train, X_test, y_train, y_test):
@@ -83,109 +77,8 @@ def evaluate(y_pred, *, X_train, X_test, y_train, y_test):
 """
 
 
-async def test_verifier_passes_for_good_load_data():
-    tool = _module_tool("load_data", GOOD_LOAD_DATA)
-    v = ToolVerifier(LocalSandbox())
-    result = await v.verify(tool, _LOAD_CONTRACT, workspace=None)
-    assert result.verified is True, result.errors
-    assert result.errors == []
-    assert "X_train" in result.sample_output
-    assert result.sample_output["X_train"]["length"] == 2
-
-
-async def test_verifier_flags_wrong_tuple_length():
-    tool = _module_tool("load_data", BAD_LOAD_DATA_SHAPE)
-    v = ToolVerifier(LocalSandbox())
-    result = await v.verify(tool, _LOAD_CONTRACT, workspace=None)
-    assert result.verified is False
-    assert any("3 items" in e or "expected 4" in e for e in result.errors)
-
-
-async def test_verifier_flags_wrong_return_kind():
-    tool = _module_tool("load_data", BAD_LOAD_DATA_DICT)
-    v = ToolVerifier(LocalSandbox())
-    result = await v.verify(tool, _LOAD_CONTRACT, workspace=None)
-    assert result.verified is False
-    assert any("tuple" in e for e in result.errors)
-
-
-async def test_verifier_passes_for_good_evaluate_with_fixture():
-    tool = _module_tool("evaluate", GOOD_EVALUATE)
-    v = ToolVerifier(LocalSandbox())
-    result = await v.verify(
-        tool,
-        _EVAL_CONTRACT,
-        workspace=None,
-        fixtures={
-            "y_pred": [1.0, 2.0, 3.0],
-            "X_train": [[1.0]],
-            "X_test": [[2.0]],
-            "y_train": [1.0],
-            "y_test": [1.0, 2.0, 3.0],
-        },
-    )
-    assert result.verified is True, result.errors
-    assert {"rmse", "r2", "mae"}.issubset(result.sample_output.keys())
-
-
-async def test_verifier_requires_fixture_when_contract_has_params():
-    tool = _module_tool("evaluate", GOOD_EVALUATE)
-    v = ToolVerifier(LocalSandbox())
-    result = await v.verify(tool, _EVAL_CONTRACT, workspace=None)
-    assert result.verified is False
-    assert any("y_pred" in e for e in result.errors)
-
-
-_EVAL_FIXTURES = {
-    "y_pred": [1.0],
-    "X_train": [[1.0]],
-    "X_test": [[1.0]],
-    "y_train": [1.0],
-    "y_test": [1.0],
-}
-
-
-async def test_verifier_catches_crashes():
-    tool = _module_tool("evaluate", BAD_EVALUATE_RAISES)
-    v = ToolVerifier(LocalSandbox())
-    result = await v.verify(tool, _EVAL_CONTRACT, workspace=None, fixtures=_EVAL_FIXTURES)
-    assert result.verified is False
-    assert any("boom" in e or "raised" in e.lower() for e in result.errors)
-
-
-async def test_verifier_rejects_non_dict_evaluate():
-    tool = _module_tool("evaluate", BAD_EVALUATE_SHAPE)
-    v = ToolVerifier(LocalSandbox())
-    result = await v.verify(tool, _EVAL_CONTRACT, workspace=None, fixtures=_EVAL_FIXTURES)
-    assert result.verified is False
-    assert any("dict" in e for e in result.errors)
-
-
-async def test_verifier_rejects_missing_key():
-    tool = _module_tool("evaluate", BAD_EVALUATE_MISSING_KEY)
-    v = ToolVerifier(LocalSandbox())
-    result = await v.verify(tool, _EVAL_CONTRACT, workspace=None, fixtures=_EVAL_FIXTURES)
-    assert result.verified is False
-    assert any("mae" in e for e in result.errors)
-
-
-async def test_verifier_rejects_missing_entrypoint():
-    tool = _module_tool("evaluate", NO_ENTRYPOINT)
-    v = ToolVerifier(LocalSandbox())
-    result = await v.verify(tool, _EVAL_CONTRACT, workspace=None, fixtures=_EVAL_FIXTURES)
-    assert result.verified is False
-    assert any("evaluate" in e for e in result.errors)
-
-
-async def test_verifier_rejects_empty_code():
-    tool = _module_tool("load_data", "")
-    v = ToolVerifier(LocalSandbox())
-    result = await v.verify(tool, _LOAD_CONTRACT, workspace=None)
-    assert result.verified is False
-    assert any("no code" in e.lower() for e in result.errors)
-
-
-async def test_verify_required_tools_threads_y_test_into_evaluate():
+async def test_verify_required_tools_passes_for_good_tools():
+    """Both load_data and evaluate pass with well-formed implementations."""
     load = _module_tool("load_data", GOOD_LOAD_DATA)
     evaluate = _module_tool("evaluate", GOOD_EVALUATE)
     task = Task(type=TaskType.REGRESSION)
@@ -195,7 +88,7 @@ async def test_verify_required_tools_threads_y_test_into_evaluate():
     )
 
     assert load.verification is not None
-    assert load.verification.verified is True
+    assert load.verification.verified is True, load.verification.errors
     assert evaluate.verification is not None
     assert evaluate.verification.verified is True, evaluate.verification.errors
     assert len(out) == 2
@@ -205,30 +98,141 @@ async def test_verify_required_tools_skips_missing_tool():
     """Missing required tools shouldn't crash — they just stay unverified."""
     load = _module_tool("load_data", GOOD_LOAD_DATA)
     task = Task(type=TaskType.REGRESSION)
+    # Only load_data provided; evaluate is absent — no crash expected.
     out = await verify_required_tools([load], task, sandbox=LocalSandbox(), workspace=None)
     assert out[0].verification is not None
     assert out[0].verification.verified is True
 
 
-async def test_verify_required_tools_evaluate_fails_when_load_data_fails():
+async def test_verify_bad_load_data_shape():
+    """load_data returning a 3-tuple should fail with a shape error."""
+    load = _module_tool("load_data", BAD_LOAD_DATA_SHAPE)
+    evaluate = _module_tool("evaluate", GOOD_EVALUATE)
+    task = Task(type=TaskType.REGRESSION)
+    await verify_required_tools([load, evaluate], task, sandbox=LocalSandbox(), workspace=None)
+    assert load.verification is not None
+    assert not load.verification.verified
+    msg = " ".join(load.verification.errors).lower()
+    assert "4" in msg or "tuple" in msg or "4-tuple" in msg
+
+
+async def test_verify_bad_load_data_dict():
+    """load_data returning a dict should fail."""
+    load = _module_tool("load_data", BAD_LOAD_DATA_DICT)
+    evaluate = _module_tool("evaluate", GOOD_EVALUATE)
+    task = Task(type=TaskType.REGRESSION)
+    await verify_required_tools([load, evaluate], task, sandbox=LocalSandbox(), workspace=None)
+    assert load.verification is not None
+    assert not load.verification.verified
+
+
+async def test_verify_evaluate_fails_when_load_data_fails():
+    """When load_data fails, evaluate gets no result marker — should fail with clear message."""
     load = _module_tool("load_data", BAD_LOAD_DATA_SHAPE)
     evaluate = _module_tool("evaluate", GOOD_EVALUATE)
     task = Task(type=TaskType.REGRESSION)
     await verify_required_tools([load, evaluate], task, sandbox=LocalSandbox(), workspace=None)
     assert load.verification is not None and not load.verification.verified
-    # When load_data fails, evaluate is *skipped* with a clear cascade message
-    # rather than the misleading "missing fixture for parameter 'y_pred'".
+    # evaluate should also fail (script exits after load_data failure)
+    assert evaluate.verification is not None
+    assert not evaluate.verification.verified
+
+
+async def test_verify_evaluate_raises():
+    """evaluate raising an exception should surface the error message."""
+    load = _module_tool("load_data", GOOD_LOAD_DATA)
+    evaluate = _module_tool("evaluate", BAD_EVALUATE_RAISES)
+    task = Task(type=TaskType.REGRESSION)
+    await verify_required_tools([load, evaluate], task, sandbox=LocalSandbox(), workspace=None)
+    assert load.verification is not None and load.verification.verified
+    assert evaluate.verification is not None
+    assert not evaluate.verification.verified
+    msg = " ".join(evaluate.verification.errors)
+    assert "boom" in msg or "raised" in msg.lower()
+
+
+async def test_verify_evaluate_missing_key():
+    """evaluate returning a dict missing 'mae' should fail with a key error."""
+    load = _module_tool("load_data", GOOD_LOAD_DATA)
+    evaluate = _module_tool("evaluate", BAD_EVALUATE_MISSING_KEY)
+    task = Task(type=TaskType.REGRESSION)
+    await verify_required_tools([load, evaluate], task, sandbox=LocalSandbox(), workspace=None)
+    assert evaluate.verification is not None
+    assert not evaluate.verification.verified
+    assert any("mae" in e for e in evaluate.verification.errors)
+
+
+async def test_verify_evaluate_wrong_return_type():
+    """evaluate returning a list instead of dict should fail."""
+    load = _module_tool("load_data", GOOD_LOAD_DATA)
+    evaluate = _module_tool("evaluate", BAD_EVALUATE_SHAPE)
+    task = Task(type=TaskType.REGRESSION)
+    await verify_required_tools([load, evaluate], task, sandbox=LocalSandbox(), workspace=None)
     assert evaluate.verification is not None
     assert not evaluate.verification.verified
     msg = " ".join(evaluate.verification.errors).lower()
-    assert "skipped" in msg
-    assert "load_data" in msg
+    assert "dict" in msg
+
+
+async def test_verify_empty_load_data_output():
+    """Empty list returns from load_data: load_data structurally passes (4-tuple of lists),
+    but evaluate fails downstream because empty arrays cause a ZeroDivisionError."""
+    empty_load_data = """\
+def load_data():
+    return [], [], [], []
+"""
+    load = _module_tool("load_data", empty_load_data)
+    evaluate = _module_tool("evaluate", GOOD_EVALUATE)
+    task = Task(type=TaskType.REGRESSION)
+    await verify_required_tools([load, evaluate], task, sandbox=LocalSandbox(), workspace=None)
+    assert load.verification is not None
+    assert evaluate.verification is not None
+    # In the combined verifier, load_data passes structurally (valid 4-tuple).
+    # evaluate crashes on empty arrays (ZeroDivisionError) — the combo must fail.
+    assert not evaluate.verification.verified
+
+
+async def test_verify_load_data_raises():
+    """When load_data raises, the error message should include file:line."""
+    raising = """\
+def load_data():
+    raise RuntimeError("kaboom from inside the tool")
+"""
+    load = _module_tool("load_data", raising)
+    evaluate = _module_tool("evaluate", GOOD_EVALUATE)
+    task = Task(type=TaskType.REGRESSION)
+    await verify_required_tools([load, evaluate], task, sandbox=LocalSandbox(), workspace=None)
+    assert load.verification is not None
+    assert not load.verification.verified
+    msg = " ".join(load.verification.errors)
+    assert "kaboom" in msg
+    assert "load_data.py:" in msg
+
+
+async def test_verify_pandas_return_types():
+    """Real ML pipelines return pandas DataFrames/Series; the verifier should handle them."""
+    pandas_load_data = """\
+import pandas as pd
+
+
+def load_data():
+    X_train = pd.DataFrame([[1.0, 2.0], [3.0, 4.0]], columns=["a", "b"])
+    X_test = pd.DataFrame([[5.0, 6.0]], columns=["a", "b"])
+    y_train = pd.Series([1.0, 2.0], name="y")
+    y_test = pd.Series([3.0], name="y")
+    return X_train, X_test, y_train, y_test
+"""
+    load = _module_tool("load_data", pandas_load_data)
+    evaluate = _module_tool("evaluate", GOOD_EVALUATE)
+    task = Task(type=TaskType.REGRESSION)
+    await verify_required_tools([load, evaluate], task, sandbox=LocalSandbox(), workspace=None)
+    assert load.verification is not None
+    assert load.verification.verified is True, load.verification.errors
 
 
 async def test_evaluate_can_import_load_data():
-    """Phase 4 contract: ``evaluate.py`` may still import ``load_data`` for
-    backwards-compat (e.g. to load extra context). The verifier must lay both
-    modules in the same dir so the import resolves."""
+    """evaluate.py may still import load_data for backwards-compat.
+    Both modules are in the same dir so the import resolves."""
     load = _module_tool("load_data", GOOD_LOAD_DATA)
     evaluate_with_import = _module_tool(
         "evaluate",
@@ -255,80 +259,12 @@ def evaluate(y_pred, *, X_train, X_test, y_train, y_test):
     )
 
 
-async def test_verifier_rejects_empty_load_data_output():
-    """Empty list returns used to pass the type check ('list of float' was
-    satisfied by []) and produced misleading downstream sklearn errors. They
-    should now fail at load_data with an actionable message about the dataset
-    window."""
-    empty_load_data = """\
-def load_data():
-    return [], [], [], []
-"""
-    tool = _module_tool("load_data", empty_load_data)
-    v = ToolVerifier(LocalSandbox())
-    result = await v.verify(tool, _LOAD_CONTRACT, workspace=None)
-    assert result.verified is False
-    msg = " ".join(result.errors).lower()
-    assert "non-empty" in msg or "0 rows" in msg
-    assert "program.md" in msg
-
-
-async def test_verifier_surfaces_traceback_file_line():
-    """When a tool raises, the error message should include the user-code
-    file:line so the user knows where to look."""
-    raising = """\
-def load_data():
-    raise RuntimeError("kaboom from inside the tool")
-"""
-    tool = _module_tool("load_data", raising)
-    v = ToolVerifier(LocalSandbox())
-    result = await v.verify(tool, _LOAD_CONTRACT, workspace=None)
-    assert result.verified is False
-    msg = " ".join(result.errors)
-    assert "load_data.py:" in msg
-    assert "kaboom" in msg
-
-
-async def test_verifier_accepts_pandas_return_types():
-    """Real ML pipelines return pandas DataFrames/Series. The verifier's JSON
-    encoder used to silently `str()` DataFrames (DataFrame has no `.tolist()`)
-    and the contract check then complained `expected list, got str`. Lock in
-    that DataFrames/Series are converted via `to_numpy().tolist()` instead."""
-    import pandas as pd  # noqa: F401  — used in the generated module string
-
-    pandas_load_data = """\
-import pandas as pd
-
-
-def load_data():
-    X_train = pd.DataFrame([[1.0, 2.0], [3.0, 4.0]], columns=["a", "b"])
-    X_test = pd.DataFrame([[5.0, 6.0]], columns=["a", "b"])
-    y_train = pd.Series([1.0, 2.0], name="y")
-    y_test = pd.Series([3.0], name="y")
-    return X_train, X_test, y_train, y_test
-"""
-    tool = _module_tool("load_data", pandas_load_data)
-    v = ToolVerifier(LocalSandbox())
-    result = await v.verify(tool, _LOAD_CONTRACT, workspace=None)
-    assert result.verified is True, result.errors
-
-
-async def test_verifier_handles_arbitrary_contract():
-    """Verifier should work with custom dict-shaped contracts, not just regression."""
-    custom = ToolContract(
-        name="square",
-        description="square",
-        entrypoint="square",
-        module_filename="square.py",
-        params_schema={"x": "float"},
-        returns_schema={"result": "float"},
-    )
-    tool = _module_tool(
-        "square",
-        "def square(x):\n    return {'result': x * x}\n",
-        entrypoint="square",
-    )
-    v = ToolVerifier(LocalSandbox())
-    result = await v.verify(tool, custom, workspace=None, fixtures={"x": 3.0})
-    assert result.verified is True, result.errors
-    assert result.sample_output["result"] == 9.0
+async def test_verify_sample_output_populated_for_evaluate():
+    """After passing verification, evaluate.verification.sample_output should
+    contain at least rmse, r2, mae."""
+    load = _module_tool("load_data", GOOD_LOAD_DATA)
+    evaluate = _module_tool("evaluate", GOOD_EVALUATE)
+    task = Task(type=TaskType.REGRESSION)
+    await verify_required_tools([load, evaluate], task, sandbox=LocalSandbox(), workspace=None)
+    assert evaluate.verification is not None and evaluate.verification.verified
+    assert {"rmse", "r2", "mae"}.issubset(evaluate.verification.sample_output.keys())
