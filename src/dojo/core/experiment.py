@@ -26,6 +26,7 @@ class CodeRun:
     exit_code: int = 0
     duration_ms: float = 0.0
     timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
+    artifact_paths: list[str] = field(default_factory=list)
 
 
 @dataclass
