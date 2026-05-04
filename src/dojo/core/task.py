@@ -59,6 +59,9 @@ class TaskTypeSpec:
     required_tools: list[ToolContract]
     generation_prompt_template: str
     config_schema: dict[str, Any]  # which Task.config fields are required/optional
+    runner_callsite: str
+    verifier_fixture_keys: dict[str, dict[str, str]]
+    contract_version: int
     train_output_description: str = ""  # what `def train()` must return
 
 
@@ -225,6 +228,11 @@ TASK_TYPE_REGISTRY: ClassVar[dict[TaskType, TaskTypeSpec]] = {
                 "random_state": 42,
             },
         },
+        runner_callsite="metrics = evaluate(train())",
+        verifier_fixture_keys={
+            "evaluate": {"y_pred": "y_test"},
+        },
+        contract_version=1,
         train_output_description="a flat list of float predictions for the test set, in the same order as X_test from load_data()",
     ),
 }
