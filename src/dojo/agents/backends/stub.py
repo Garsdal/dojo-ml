@@ -54,7 +54,8 @@ class StubAgentBackend(AgentBackend):
         train + evaluate end-to-end). The scripted flow:
 
         1. ``search_knowledge`` — observability of the prior-knowledge step.
-        2. ``run_experiment`` — best-effort. Trivial ``def train(): return [0.0]``.
+        2. ``run_experiment`` — best-effort. Trivial
+           ``def train(X_train, y_train, X_test): return [0.0]*len(X_test)``.
            If the domain has no frozen task / no workspace, the call returns
            an error result and the stub keeps going so non-tracking tests
            still see the full event sequence.

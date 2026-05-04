@@ -47,11 +47,12 @@ def create_experiment_tools(lab: LabEnvironment) -> list[ToolDef]:
     async def run_experiment(args: dict[str, Any]) -> ToolResult:
         """Run a complete train + evaluate experiment in one subprocess.
 
-        The agent submits ``train_code`` (a Python module defining ``def train()``);
-        the framework writes it alongside an auto-generated runner stub, executes
-        the runner, parses metrics from the stdout marker, and transitions the
-        experiment state. Anti-cheating: ``evaluate`` is imported from the
-        domain's canonical, frozen path — the agent cannot redefine it.
+        The agent submits ``train_code`` (a Python module defining
+        ``def train(X_train, y_train, X_test)``); the framework writes it
+        alongside an auto-generated runner stub, executes the runner, parses
+        metrics from the stdout marker, and transitions the experiment state.
+        Anti-cheating: ``evaluate`` is imported from the domain's canonical,
+        frozen path — the agent cannot redefine it.
         """
         domain_id = args["domain_id"]
         hypothesis_text = args["hypothesis"]
@@ -214,12 +215,15 @@ def create_experiment_tools(lab: LabEnvironment) -> list[ToolDef]:
             name="run_experiment",
             description=(
                 "Run a single train+evaluate experiment in one subprocess. "
-                "Pass `train_code` as a Python module that defines `def train()` "
-                "returning the task-specific output (regression: a flat list of "
-                "float predictions for the test set). The framework imports your "
-                "train module and the canonical `evaluate`, runs them in the "
-                "same Python process, parses the metrics from the runner's "
-                "stdout marker, and records them on the experiment."
+                "Pass `train_code` as a Python module that defines "
+                "`def train(X_train, y_train, X_test) -> y_pred` returning the "
+                "task-specific output (regression: a flat list of float "
+                "predictions for X_test, in input order). The framework loads "
+                "the data once and calls your train function with the splits "
+                "as parameters — DO NOT call `load_data()` from inside train. "
+                "After train returns, the framework calls the canonical "
+                "`evaluate(y_pred, X_train=..., X_test=..., y_train=..., "
+                "y_test=...)` and records the metrics on the experiment."
             ),
             parameters={
                 "type": "object",
@@ -235,9 +239,13 @@ def create_experiment_tools(lab: LabEnvironment) -> list[ToolDef]:
                     "train_code": {
                         "type": "string",
                         "description": (
-                            "Python source defining `def train()`. May import from "
-                            "`load_data` (frozen) and any standard libs available "
-                            "in the workspace."
+                            "Python source defining "
+                            "`def train(X_train, y_train, X_test) -> y_pred`. "
+                            "Returns a flat list of float predictions for "
+                            "X_test in input order. The framework supplies "
+                            "the data — do NOT call `load_data()` from inside "
+                            "`train`. May use any standard libs available in "
+                            "the workspace."
                         ),
                     },
                     "variables": {

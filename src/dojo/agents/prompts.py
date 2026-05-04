@@ -25,9 +25,17 @@ def build_system_prompt(
 ## Your role
 You systematically explore ML approaches to solve a given problem. Each
 experiment is a single ``run_experiment`` MCP call: you submit Python source
-defining ``def train()``, the framework runs it against frozen ``load_data``
-and ``evaluate``, and returns the metrics. You DO NOT modify the framework's
-frozen tools — only your own ``train()`` is variable.
+defining
+
+```python
+def train(X_train, y_train, X_test) -> y_pred
+```
+
+The framework loads the data once, calls your ``train()`` with the splits
+as parameters, passes the predictions to the frozen ``evaluate()``, and
+returns the metrics. You DO NOT modify the framework's frozen tools — only
+your own ``train()`` is variable, and you DO NOT call ``load_data()`` from
+inside ``train()`` — the data is already passed in.
 
 ## Your domain ID
 {run.domain_id}
@@ -39,10 +47,10 @@ so experiments and knowledge are linked to this domain.
 
 ### Per-experiment driver
 - **run_experiment** — Submit ``train_code`` (Python module string) along with
-  a hypothesis. The framework creates the experiment, runs your ``def train()``
-  against the frozen ``load_data`` + ``evaluate``, parses metrics, and records
-  the result. Returns ``{{experiment_id, status, metrics, stdout, stderr,
-  exit_code, run_number}}``.
+  a hypothesis. The framework creates the experiment, runs your
+  ``def train(X_train, y_train, X_test)`` against the frozen ``load_data`` +
+  ``evaluate``, parses metrics, and records the result. Returns
+  ``{{experiment_id, status, metrics, stdout, stderr, exit_code, run_number}}``.
 
 ### Read-only observability
 - **get_experiment** / **list_experiments** — Inspect prior experiments.
@@ -65,8 +73,9 @@ so experiments and knowledge are linked to this domain.
    raw experiments at all.
 2. Plan one hypothesis worth testing.
 3. ``run_experiment(domain_id, hypothesis, train_code)`` — your ``train_code``
-   defines ``def train()`` returning the task-specific output (regression: a
-   flat list of float predictions for the test set).
+   defines ``def train(X_train, y_train, X_test)`` returning the task-specific
+   output (regression: a flat list of float predictions for X_test, in the
+   same order).
 4. If — and only if — the result is non-obvious or worth carrying forward
    (e.g. a model class beats another by a meaningful margin, a hyperparameter
    range is dead, a feature trick helps/hurts), call ``write_knowledge`` with
@@ -101,18 +110,17 @@ through it. Defaults that keep you efficient:
 ## Example train_code
 
 ```python
-from load_data import load_data
 from sklearn.linear_model import LinearRegression
 
 
-def train():
-    X_train, X_test, y_train, _ = load_data()
+def train(X_train, y_train, X_test):
     model = LinearRegression().fit(X_train, y_train)
     return model.predict(X_test).tolist()
 ```
 
-The agent owns ``train()`` only. ``load_data`` is frozen and shared across
-experiments — that's why metrics are comparable.
+The agent owns ``train()`` only. ``load_data`` is frozen and called by the
+framework before your ``train()`` — its splits are passed in as parameters,
+so don't import or call it yourself.
 
 ## Important rules
 - Metrics come from the framework, not from you. Never compute or pass metrics
@@ -194,13 +202,26 @@ def _build_task_section(task: Task | None) -> str:
         lines.append(f"Expected metric keys (from `evaluate`): {expected}")
 
     lines.append(
-        "\n### Contract\n"
-        "- **You own**: ``def train()`` — the only thing variable across experiments.\n"
-        "- **The framework owns**: ``load_data()`` and ``evaluate(y_pred)`` — "
-        "loaded from a canonical, frozen path. Don't try to override them.\n"
+        "\n### Contract — exact signatures\n"
+        "```python\n"
+        "# you write this:\n"
+        "def train(X_train, y_train, X_test) -> y_pred: ...\n"
+        "\n"
+        "# the framework calls (don't re-implement these):\n"
+        "X_train, X_test, y_train, y_test = load_data()\n"
+        "y_pred = train(X_train, y_train, X_test)\n"
+        "metrics = evaluate(\n"
+        "    y_pred,\n"
+        "    X_train=X_train, X_test=X_test,\n"
+        "    y_train=y_train, y_test=y_test,\n"
+        ")\n"
+        "```\n"
         f"- **``train()`` must return**: {train_output or 'the task-specific output'}.\n"
-        "- The framework runs ``train()`` and ``evaluate(train())`` in the "
-        "same Python process; metrics are recorded automatically."
+        "- **Do NOT call ``load_data()`` from inside ``train()``** — the data "
+        "is already loaded and passed in as parameters. Calling load_data "
+        "again wastes time and may even fail in some workspaces.\n"
+        "- ``load_data`` and ``evaluate`` are loaded from a canonical, frozen "
+        "path. Don't try to override or shadow them."
     )
 
     cfg_lines = []
