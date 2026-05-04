@@ -111,7 +111,8 @@ Domain: {domain_name}
 - It contains two paired sections that map 1:1 onto the modules you're writing:
     - `## Dataset` ⟶ steers `load_data.py`. Read this before writing module 1.
     - `## Evaluate` ⟶ steers what goes *inside* `evaluate.py`. Read this before
-      writing module 2. (The signature stays `def evaluate(y_pred)` returning
+      writing module 2. (The signature is
+      `def evaluate(y_pred, *, X_train, X_test, y_train, y_test)` returning
       `{{"rmse", "r2", "mae"}}` — only the body is yours to shape.)
   If `## Evaluate` is empty/TODO, default to sklearn-style metrics on y_test.
   If it points at an existing project evaluator, wrap it.
@@ -156,14 +157,22 @@ Module 1 — load_data.py
 - Must NOT print to stdout — return only.
 
 Module 2 — evaluate.py
-- Defines a top-level function: `def evaluate(y_pred):`
-  where `y_pred` is {train_output_description}.
-- May import from load_data: `from load_data import load_data`.
-- Reproduces the same split as load_data (call `load_data()` and unpack the
-  4-tuple) to get y_test.
-- Computes: rmse (float), r2 (float), mae (float).
+- Defines a top-level function:
+  `def evaluate(y_pred, *, X_train, X_test, y_train, y_test) -> dict`.
+- Receives all data as parameters — do **not** call ``load_data`` inside
+  ``evaluate``. The framework loads data once and passes the splits in.
+- Computes: rmse (float), r2 (float), mae (float) against ``y_test``.
 - Returns a dict with exactly those three keys: {{"rmse": ..., "r2": ..., "mae": ...}}.
 - Must NOT print to stdout — return only.
+- May write debugging / summary files into ``DOJO_ARTIFACTS_DIR`` (see
+  the Artifacts section above).
+
+## Train (agent's per-experiment code, written separately)
+The framework expects the agent's training code to define:
+  ``def train(X_train, y_train, X_test) -> y_pred``
+where ``y_pred`` is {train_output_description}. The framework calls
+``train`` with the splits from ``load_data()`` — do not call
+``load_data`` from inside ``train`` either.
 
 Output format (respond with ONLY this JSON, no markdown):
 [
@@ -207,10 +216,20 @@ TASK_TYPE_REGISTRY: ClassVar[dict[TaskType, TaskTypeSpec]] = {
             ),
             ToolContract(
                 name="evaluate",
-                description="Evaluate model predictions; receives y_pred as the only argument",
+                description=(
+                    "Evaluate model predictions; receives y_pred plus the "
+                    "train/test splits so the agent code does not need to "
+                    "call load_data internally."
+                ),
                 entrypoint="evaluate",
                 module_filename="evaluate.py",
-                params_schema={"y_pred": "list of float"},
+                params_schema={
+                    "y_pred": "list of float",
+                    "X_train": "list of lists (float)",
+                    "X_test": "list of lists (float)",
+                    "y_train": "list of float",
+                    "y_test": "list of float",
+                },
                 returns_schema={
                     "rmse": "float",
                     "r2": "float",
@@ -228,9 +247,23 @@ TASK_TYPE_REGISTRY: ClassVar[dict[TaskType, TaskTypeSpec]] = {
                 "random_state": 42,
             },
         },
-        runner_callsite="metrics = evaluate(train())",
+        runner_callsite=(
+            "y_pred = train(X_train, y_train, X_test)\n"
+            "    metrics = evaluate("
+            "y_pred, "
+            "X_train=X_train, "
+            "X_test=X_test, "
+            "y_train=y_train, "
+            "y_test=y_test)"
+        ),
         verifier_fixture_keys={
-            "evaluate": {"y_pred": "y_test"},
+            "evaluate": {
+                "y_pred": "y_test",
+                "X_train": "X_train",
+                "X_test": "X_test",
+                "y_train": "y_train",
+                "y_test": "y_test",
+            },
         },
         contract_version=1,
         train_output_description="a flat list of float predictions for the test set, in the same order as X_test from load_data()",
