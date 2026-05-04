@@ -18,6 +18,7 @@ def test_render_runner_inserts_canonical_first_on_path():
         train_module="__dojo_train_1",
         canonical_dir="/canonical",
         workspace_dir="/workspace",
+        callsite="metrics = evaluate(train())",
     )
     canonical_idx = code.index(repr("/canonical"))
     workspace_idx = code.index(repr("/workspace"))
@@ -74,3 +75,34 @@ def test_parse_runner_stdout_metrics_must_be_dict():
     stdout = f"{METRICS_MARKER}[1, 2, 3]\n"
     out = parse_runner_stdout(stdout)
     assert out.kind == "no_marker"
+
+
+# ---------------------------------------------------------------------------
+# Tests for callsite parameterisation (Task B2)
+# ---------------------------------------------------------------------------
+
+
+def test_render_runner_inlines_callsite_from_spec():
+    from dojo.core.task import TASK_TYPE_REGISTRY, TaskType
+
+    spec = TASK_TYPE_REGISTRY[TaskType.REGRESSION]
+    code = render_runner(
+        train_module="__dojo_train",
+        canonical_dir="/canon",
+        workspace_dir="/ws",
+        callsite=spec.runner_callsite,
+    )
+    assert spec.runner_callsite in code
+    assert "from __dojo_train import train" in code
+    assert "from evaluate import evaluate" in code
+
+
+def test_render_runner_uses_provided_callsite_literal():
+    custom = "metrics = {'rmse': 0.0, 'r2': 0.0, 'mae': 0.0}"
+    code = render_runner(
+        train_module="__dojo_train",
+        canonical_dir="/canon",
+        workspace_dir="/ws",
+        callsite=custom,
+    )
+    assert custom in code

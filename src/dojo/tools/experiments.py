@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from dojo.core.experiment import CodeRun, Experiment, ExperimentResult, Hypothesis
+from dojo.core.task import TASK_TYPE_REGISTRY
 from dojo.runtime.experiment_service import ExperimentService
 from dojo.runtime.lab import LabEnvironment
 from dojo.runtime.runner import (
@@ -105,11 +106,13 @@ def create_experiment_tools(lab: LabEnvironment) -> list[ToolDef]:
 
         # 2b. Write train + runner into the per-experiment runs dir.
         (runs_dir / train_filename).write_text(train_code)
+        spec = TASK_TYPE_REGISTRY[domain.task.type]
         runner_code = render_runner(
             train_module=train_module,
             canonical_dir=str(canonical_dir),
             workspace_dir=str(workspace_path),
             train_dir=str(runs_dir),
+            callsite=spec.runner_callsite,
         )
 
         # 3. Execute the runner from the runs dir (so its script lands there,

@@ -32,18 +32,20 @@ def render_runner(
     train_module: str,
     canonical_dir: str,
     workspace_dir: str,
+    callsite: str,
     train_dir: str | None = None,
 ) -> str:
     """Render the runner script as a module string.
 
+    The ``callsite`` is the task-type-specific Python expression(s) that wire
+    train() and evaluate() together — it comes from
+    ``TaskTypeSpec.runner_callsite`` so future task types are a registry-only
+    addition.
+
     sys.path priority (last-inserted wins):
-      1. ``train_dir`` — where the per-experiment ``__dojo_train.py`` lives
-         (under .dojo/domains/{id}/runs/{eid}/), if provided.
+      1. ``train_dir`` — where the per-experiment ``__dojo_train.py`` lives.
       2. ``canonical_dir`` — frozen ``load_data`` / ``evaluate`` tools.
       3. ``workspace_dir`` — the user's repo, for their own imports.
-
-    Canonical-before-workspace ensures the frozen tools resolve correctly even
-    if the user's repo also has files named ``load_data.py`` / ``evaluate.py``.
     """
     extra_paths = ""
     if train_dir is not None:
@@ -55,8 +57,10 @@ sys.path.insert(0, {canonical_dir!r})
 {extra_paths}
 try:
     from {train_module} import train
+    from load_data import load_data
     from evaluate import evaluate
-    metrics = evaluate(train())
+    X_train, X_test, y_train, y_test = load_data()
+    {callsite}
     print({METRICS_MARKER!r} + json.dumps(metrics))
 except Exception as e:
     print({ERROR_MARKER!r} + json.dumps({{
