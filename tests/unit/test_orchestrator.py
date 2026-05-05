@@ -315,8 +315,10 @@ class TestAgentOrchestrator:
         assert "tool_call" in event_types
         assert "tool_result" in event_types
         assert "result" in event_types
-        # After the run completes, the knowledge flush appends its own events.
-        assert event_types[-1] == "knowledge_flush_completed"
+        # After the run completes, the knowledge flush appends its own events,
+        # then the run_finalized sentinel is appended last.
+        assert "knowledge_flush_completed" in event_types
+        assert event_types[-1] == "run_finalized"
 
 
 class TestOrchestratorTaskGate:
@@ -521,3 +523,15 @@ class TestEndOfRunKnowledgeFlush:
 
         assert run.status == RunStatus.COMPLETED
         assert await lab.knowledge_linker.get_domain_knowledge("d7") == []
+
+
+async def test_execute_emits_run_finalized_as_last_event(lab):
+    """run.events ends with a run_finalized sentinel after flush completes."""
+    backend = StubAgentBackend()
+    orchestrator = AgentOrchestrator(lab, backend)
+
+    run = await orchestrator.start("test", domain_id="d", require_ready_task=False)
+    await orchestrator.execute(run)
+
+    assert run.events, "expected at least one event"
+    assert run.events[-1].event_type == "run_finalized"

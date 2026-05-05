@@ -168,6 +168,7 @@ async def stream_events(run_id: str, request: Request) -> EventSourceResponse:
 
     async def event_generator():
         seen = 0
+        finalized = False
         while True:
             # Yield new events
             while seen < len(run.events):
@@ -185,11 +186,27 @@ async def stream_events(run_id: str, request: Request) -> EventSourceResponse:
                         default=str,
                     ),
                 }
+                if event.event_type == "run_finalized":
+                    finalized = True
 
-            # Check if run is done
-            if run.status in (RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.STOPPED):
+            if finalized:
                 yield {"event": "done", "data": json.dumps({"status": run.status.value})}
                 return
+
+            # Belt-and-braces: if the orchestrator died before emitting
+            # run_finalized but the run is in a terminal state with no new
+            # events for a while, exit anyway. The orchestrator's finally
+            # block is best-effort and a hard crash could skip it.
+            if run.status in (RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.STOPPED):
+                # Wait one more poll cycle to let any final events land.
+                await asyncio.sleep(0.3)
+                if seen >= len(run.events):
+                    yield {
+                        "event": "done",
+                        "data": json.dumps({"status": run.status.value}),
+                    }
+                    return
+                continue
 
             await asyncio.sleep(0.3)
 

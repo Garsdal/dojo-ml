@@ -236,6 +236,11 @@ class AgentOrchestrator:
             # Idempotent — the CLI graceful-stop path may already have flushed.
             with contextlib.suppress(Exception):
                 await self.flush_knowledge(run)
+            # Sentinel: SSE consumers wait for this before sending `done`,
+            # so the flush events written above reach the frontend.
+            run.events.append(AgentEvent(event_type="run_finalized", data={}))
+            with contextlib.suppress(Exception):
+                await self.lab.run_store.save(run)
 
     async def flush_knowledge(self, run: AgentRun) -> int:
         """Extract durable findings from this run's transcript and write atoms.
