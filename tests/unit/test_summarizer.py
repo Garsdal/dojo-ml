@@ -98,6 +98,12 @@ async def test_non_numeric_confidence_treated_as_default():
     assert "string-confidence atom" in claims
     assert "null-confidence atom" in claims
     assert "good atom" in claims
+    # Non-numeric confidences must be normalized so downstream float() casts
+    # in flush_run_knowledge don't silently drop the atom.
+    by_claim = {a["claim"]: a for a in atoms}
+    assert by_claim["string-confidence atom"]["confidence"] == 0.5
+    assert by_claim["null-confidence atom"]["confidence"] == 0.5
+    assert by_claim["good atom"]["confidence"] == 0.9
 
 
 class _LabStub:

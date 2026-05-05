@@ -103,6 +103,7 @@ async def extract_knowledge_atoms(
             confidence = 0.5
         if confidence < _CONFIDENCE_FLOOR:
             continue
+        a["confidence"] = confidence
         cleaned.append(a)
     return cleaned[:_MAX_ATOMS]
 
