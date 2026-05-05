@@ -162,7 +162,7 @@ async def _run_async(
         loop.add_signal_handler(signal.SIGINT, _on_sigint)
 
     try:
-        await _stream_events(run_obj, execute_task, stop_requested)
+        seen = await _stream_events(run_obj, execute_task, stop_requested)
     finally:
         with contextlib.suppress(NotImplementedError):
             loop.remove_signal_handler(signal.SIGINT)
@@ -175,6 +175,10 @@ async def _run_async(
         # Drain the execute task so any final writes land before we return.
         with contextlib.suppress(asyncio.CancelledError, Exception):
             await asyncio.wait_for(execute_task, timeout=2.0)
+        # Render any events emitted by the flush / finalization that
+        # arrived after _stream_events returned on stop_requested.
+        for ev in run_obj.events[seen:]:
+            _print_event(ev)
 
     _print_final_summary(run_obj)
 
@@ -186,12 +190,15 @@ async def _stream_events(
     run_obj: AgentRun,
     execute_task: asyncio.Task,
     stop_requested: asyncio.Event,
-) -> None:
+) -> int:
     """Print agent events to the terminal as they're produced.
 
     Polls `run_obj.events` (the same list orchestrator.execute() appends to).
     The orchestrator runs in the background task; we read the shared list.
     Returns early if `stop_requested` is set so the caller can run cleanup.
+
+    Returns the number of events already rendered, so the caller's post-stop
+    cleanup block can drain remaining events without double-printing.
     """
     seen = 0
     terminal_states = {RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.STOPPED}
@@ -206,10 +213,10 @@ async def _stream_events(
             while seen < len(run_obj.events):
                 _print_event(run_obj.events[seen])
                 seen += 1
-            return
+            return seen
 
         if stop_requested.is_set():
-            return
+            return seen
 
         await asyncio.sleep(0.1)
 
@@ -236,6 +243,20 @@ def _print_event(event: AgentEvent) -> None:
         if cost is not None:
             bits.append(f"cost=${cost:.4f}")
         console.print(f"\n[dim]result: {', '.join(bits)}[/dim]")
+    elif et == "knowledge_flush_started":
+        console.print("[dim]saving durable knowledge from this session…[/dim]")
+    elif et == "knowledge_flush_completed":
+        if "error" in data:
+            console.print(f"[dim]knowledge extraction skipped: {data['error']}[/dim]")
+        else:
+            count = int(data.get("count", 0))
+            if count:
+                console.print(f"[green]✓[/green] saved {count} knowledge atom(s) from this session")
+            else:
+                console.print("[dim]no durable findings worth saving[/dim]")
+    elif et == "run_finalized":
+        # Sentinel — drives SSE termination, no terminal output needed.
+        pass
     else:
         console.print(f"  [dim]{et}[/dim]")
 
@@ -251,6 +272,10 @@ async def _graceful_stop(
 ) -> None:
     """Interrupt the agent, then extract durable findings as knowledge atoms.
 
+    The flush itself emits ``knowledge_flush_started`` / ``knowledge_flush_completed``
+    events into ``run_obj.events``; ``_print_event`` renders them. We don't
+    print here — that would duplicate the indicator on dual-flush paths.
+
     A second Ctrl-C during this window short-circuits the cleanup so the
     user is never trapped waiting on the LLM.
     """
@@ -262,25 +287,10 @@ async def _graceful_stop(
     if sigint_count["n"] >= 2:
         return
 
-    console.print(
-        "[dim]extracting durable knowledge from this session (Ctrl-C again to skip)…[/dim]"
-    )
-
-    extract_task = asyncio.create_task(orchestrator.flush_knowledge(run_obj))
     try:
-        written = await extract_task
+        await orchestrator.flush_knowledge(run_obj)
     except (asyncio.CancelledError, Exception) as e:
         logger.warning("graceful_stop_extract_failed", error=str(e))
-        console.print(f"[dim]knowledge extraction skipped: {e}[/dim]")
-        return
-
-    if sigint_count["n"] >= 2:
-        return
-
-    if written:
-        console.print(f"[green]✓[/green] saved {written} knowledge atom(s) from this session")
-    else:
-        console.print("[dim]no durable findings worth saving[/dim]")
 
 
 def _print_final_summary(run_obj: AgentRun) -> None:
