@@ -113,8 +113,8 @@ Domain: {domain_name}
     - `## Dataset` ⟶ steers `load_data.py`. Read this before writing module 1.
     - `## Evaluate` ⟶ steers what goes *inside* `evaluate.py`. Read this before
       writing module 2. (The signature is
-      `def evaluate(y_pred, *, X_train, X_test, y_train, y_test)` returning
-      `{{"rmse", "r2", "mae"}}` — only the body is yours to shape.)
+      `def evaluate(y_pred, *, X_train, X_test, y_train, y_test, artifacts_dir)`
+      returning `{{"rmse", "r2", "mae"}}` — only the body is yours to shape.)
   If `## Evaluate` is empty/TODO, default to sklearn-style metrics on y_test.
   If it points at an existing project evaluator, wrap it.
 - For sklearn-bundled datasets (e.g. fetch_california_housing, load_diabetes),
@@ -129,17 +129,6 @@ Domain: {domain_name}
   to disk** (e.g. `Path("cache") / dataset_name / "X.parquet"`) inside
   `load_data` so subsequent calls are fast. The verifier reuses the same
   module directory across runs, so the cache persists.
-
-## Artifacts
-- The framework provides a per-run directory via the env var
-  ``DOJO_ARTIFACTS_DIR``. Use it for any files you produce — plots, model
-  checkpoints, intermediate CSVs.
-- Read it as ``Path(os.environ["DOJO_ARTIFACTS_DIR"])``.
-- Do **not** write to a relative ``artifacts/`` directory or anywhere else
-  in the workspace — those paths are shared across experiments and the
-  framework will not capture them. Files written under
-  ``DOJO_ARTIFACTS_DIR`` are auto-registered into the artifact store and
-  forwarded to the tracking backend.
 
 ## Output: exactly two Python modules
 
@@ -159,14 +148,16 @@ Module 1 — load_data.py
 
 Module 2 — evaluate.py
 - Defines a top-level function:
-  `def evaluate(y_pred, *, X_train, X_test, y_train, y_test) -> dict`.
-- Receives all data as parameters — do **not** call ``load_data`` inside
-  ``evaluate``. The framework loads data once and passes the splits in.
+  `def evaluate(y_pred, *, X_train, X_test, y_train, y_test, artifacts_dir) -> dict`.
+- Receives all data splits and an ``artifacts_dir: Path`` as parameters.
+  Do **not** call ``load_data`` inside ``evaluate``. The framework loads
+  data once and passes the splits in.
 - Computes: rmse (float), r2 (float), mae (float) against ``y_test``.
 - Returns a dict with exactly those three keys: {{"rmse": ..., "r2": ..., "mae": ...}}.
 - Must NOT print to stdout — return only.
-- May write debugging / summary files into ``DOJO_ARTIFACTS_DIR`` (see
-  the Artifacts section above).
+- May write evaluation plots or diagnostics into ``artifacts_dir`` (a
+  real, writable directory — write files there directly). This is optional;
+  ignore the parameter if you have nothing to save.
 
 ## Train (agent's per-experiment code, written separately)
 The framework expects the agent's training code to define:

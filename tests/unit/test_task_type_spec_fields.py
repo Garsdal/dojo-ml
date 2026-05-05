@@ -35,8 +35,9 @@ def test_regression_runner_callsite_passes_data_to_train_and_evaluate():
 def test_regression_prompt_specifies_new_evaluate_signature():
     spec = TASK_TYPE_REGISTRY[TaskType.REGRESSION]
     prompt = spec.generation_prompt_template
-    assert "def evaluate(y_pred, *, X_train, X_test, y_train, y_test)" in prompt
-    assert "def evaluate(y_pred):" not in prompt
+    assert "def evaluate(y_pred, *, X_train, X_test, y_train, y_test, artifacts_dir)" in prompt
+    assert "DOJO_ARTIFACTS_DIR" not in prompt
+    assert "os.environ" not in prompt
 
 
 def test_regression_prompt_describes_train_signature():
