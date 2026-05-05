@@ -66,7 +66,7 @@ async def test_prompt_rejects_dataset_shape_examples():
     assert "dataset shape" in captured["prompt"].lower()
     assert "transferable" in captured["prompt"].lower()
     # Cap is part of the prompt the model sees.
-    assert "3" in captured["prompt"] and "5" in captured["prompt"]
+    assert "3-5 atoms" in captured["prompt"]
 
 
 async def test_more_than_five_atoms_truncated():
@@ -76,3 +76,24 @@ async def test_more_than_five_atoms_truncated():
     )
     atoms = await extract_knowledge_atoms(backend, transcript="x", domain_id="d")
     assert len(atoms) <= 5
+
+
+async def test_non_numeric_confidence_treated_as_default():
+    """LLM returning non-numeric or null confidence must not lose the whole batch.
+
+    Falls back to default 0.5, which passes the strict-less-than floor.
+    """
+    backend = _FakeBackend(
+        json.dumps(
+            [
+                {"claim": "string-confidence atom", "confidence": "high"},
+                {"claim": "null-confidence atom", "confidence": None},
+                {"claim": "good atom", "confidence": 0.9},
+            ]
+        )
+    )
+    atoms = await extract_knowledge_atoms(backend, transcript="x", domain_id="d")
+    claims = [a["claim"] for a in atoms]
+    assert "string-confidence atom" in claims
+    assert "null-confidence atom" in claims
+    assert "good atom" in claims

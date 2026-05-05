@@ -54,7 +54,7 @@ async def extract_knowledge_atoms(
         f"{domain_id} (or related domains) would benefit from knowing. "
         "Aim for 3-5 atoms maximum — pick the highest-signal lessons.\n\n"
         "INCLUDE:\n"
-        "- Modeling lessons that generalise (e.g. 'tree models beat linear on this dataset shape')\n"
+        "- Modeling lessons that generalise (e.g. 'tree models tend to beat linear on tabular regression')\n"
         "- Dead-ends worth avoiding (e.g. 'quadratic feature engineering hurt HistGBM')\n"
         "- Environment gotchas (e.g. 'lightgbm is not installed in this workspace')\n"
         "- Anti-patterns (e.g. 'dropping NaNs before split caused leakage')\n\n"
@@ -96,7 +96,11 @@ async def extract_knowledge_atoms(
     for a in atoms:
         if not isinstance(a, dict) or not a.get("claim"):
             continue
-        confidence = float(a.get("confidence", 0.5))
+        raw_conf = a.get("confidence", 0.5)
+        try:
+            confidence = float(raw_conf) if raw_conf is not None else 0.5
+        except (TypeError, ValueError):
+            confidence = 0.5
         if confidence < _CONFIDENCE_FLOOR:
             continue
         cleaned.append(a)
