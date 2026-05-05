@@ -9,6 +9,7 @@ from pathlib import Path
 
 from dojo.agents.backend import AgentBackend
 from dojo.agents.prompts import build_system_prompt
+from dojo.agents.summarizer import flush_run_knowledge
 from dojo.agents.types import (
     AgentEvent,
     AgentRun,
@@ -61,6 +62,7 @@ class AgentOrchestrator:
         self.cwd = cwd
         self._run: AgentRun | None = None
         self._stop_requested = False
+        self._knowledge_flushed = False
 
     async def start(
         self,
@@ -230,6 +232,28 @@ class AgentOrchestrator:
                 await stop_watcher
             with contextlib.suppress(Exception):
                 await self.lab.run_store.clear_stop_request(run.id)
+            # Best-effort: extract durable findings now that the run is done.
+            # Idempotent — the CLI graceful-stop path may already have flushed.
+            with contextlib.suppress(Exception):
+                await self.flush_knowledge(run)
+
+    async def flush_knowledge(self, run: AgentRun) -> int:
+        """Extract durable findings from this run's transcript and write atoms.
+
+        Idempotent: subsequent calls are no-ops. Called automatically at the
+        end of ``execute()`` and explicitly by the CLI graceful-stop path so
+        SIGINT users still get the cleanup.
+        """
+        if self._knowledge_flushed:
+            return 0
+        self._knowledge_flushed = True
+        return await flush_run_knowledge(
+            self.backend,
+            self.lab,
+            events=run.events,
+            domain_id=run.domain_id,
+            run_id=run.id,
+        )
 
     async def _watch_for_stop_signal(self, run_id: str) -> None:
         """Poll the run store for a stop sentinel and trigger a graceful stop.

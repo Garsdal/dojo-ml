@@ -1,5 +1,7 @@
 """Unit tests for AgentOrchestrator — uses StubAgentBackend, no SDK needed."""
 
+import json
+
 import pytest
 
 from dojo.agents.backends.stub import StubAgentBackend
@@ -359,3 +361,161 @@ class TestOrchestratorTaskGate:
         orchestrator = AgentOrchestrator(lab, backend)
         run = await orchestrator.start("p", domain_id=domain.id)
         assert run.status == RunStatus.RUNNING
+
+
+class _CompletingStubBackend(StubAgentBackend):
+    """Stub that supports backend.complete() — required to test the flush hook.
+
+    StubAgentBackend inherits the default ``AgentBackend.complete`` which raises
+    NotImplementedError, so the orchestrator silently skips its flush hook for
+    plain stubs. This subclass returns a scripted JSON payload so the orchestrator
+    actually walks the produce_knowledge path.
+    """
+
+    def __init__(
+        self,
+        events=None,
+        atoms: list[dict] | None = None,
+        wrap_in_fences: bool = False,
+        raise_on_complete: Exception | None = None,
+    ) -> None:
+        super().__init__(events=events)
+        self._atoms = atoms if atoms is not None else []
+        self._wrap_in_fences = wrap_in_fences
+        self._raise_on_complete = raise_on_complete
+        self.complete_calls = 0
+
+    async def complete(self, prompt: str) -> str:
+        self.complete_calls += 1
+        if self._raise_on_complete is not None:
+            raise self._raise_on_complete
+        body = json.dumps(self._atoms)
+        if self._wrap_in_fences:
+            return f"```json\n{body}\n```"
+        return body
+
+
+class TestEndOfRunKnowledgeFlush:
+    """The orchestrator should flush durable findings after every run, regardless
+    of terminal status. This is the safety net for agents that under-write
+    in-loop. See agents/summarizer.py for the extraction logic."""
+
+    @staticmethod
+    def _events_with_text(
+        text: str = "tried xgboost, beat baseline by 12% MAE",
+    ) -> list[AgentEvent]:
+        return [
+            AgentEvent(event_type="text", data={"text": text}),
+            AgentEvent(
+                event_type="result",
+                data={"is_error": False, "turns": 1, "cost_usd": 0.01},
+            ),
+        ]
+
+    async def test_flush_writes_atoms_via_linker(self, lab):
+        atoms = [
+            {"claim": "xgboost beats baseline by 12%", "context": "early runs", "confidence": 0.8},
+            {"claim": "lightgbm not installed", "confidence": 0.95},
+        ]
+        backend = _CompletingStubBackend(events=self._events_with_text(), atoms=atoms)
+        orchestrator = AgentOrchestrator(lab, backend)
+
+        run = await orchestrator.start("p", domain_id="d1", require_ready_task=False)
+        await orchestrator.execute(run)
+
+        assert backend.complete_calls == 1
+        stored = await lab.knowledge_linker.get_domain_knowledge("d1")
+        assert {a.claim for a in stored} == {a["claim"] for a in atoms}
+
+    async def test_flush_handles_markdown_fences(self, lab):
+        atoms = [{"claim": "fenced finding", "confidence": 0.6}]
+        backend = _CompletingStubBackend(
+            events=self._events_with_text(),
+            atoms=atoms,
+            wrap_in_fences=True,
+        )
+        orchestrator = AgentOrchestrator(lab, backend)
+
+        run = await orchestrator.start("p", domain_id="d2", require_ready_task=False)
+        await orchestrator.execute(run)
+
+        stored = await lab.knowledge_linker.get_domain_knowledge("d2")
+        assert [a.claim for a in stored] == ["fenced finding"]
+
+    async def test_flush_skips_for_unsupported_backend(self, lab):
+        """Plain StubAgentBackend's complete() raises NotImplementedError;
+        the flush should swallow it and write nothing."""
+        backend = StubAgentBackend(events=self._events_with_text())
+        orchestrator = AgentOrchestrator(lab, backend)
+
+        run = await orchestrator.start("p", domain_id="d3", require_ready_task=False)
+        await orchestrator.execute(run)
+
+        assert run.status == RunStatus.COMPLETED
+        assert await lab.knowledge_linker.get_domain_knowledge("d3") == []
+
+    async def test_flush_runs_for_failed_status(self, lab):
+        events = [
+            AgentEvent(event_type="text", data={"text": "tried xgboost; OOM at 10M rows"}),
+            AgentEvent(event_type="error", data={"error": "OOMKilled"}),
+        ]
+        atoms = [{"claim": "xgboost OOMs at 10M rows on this box", "confidence": 0.9}]
+        backend = _CompletingStubBackend(events=events, atoms=atoms)
+        orchestrator = AgentOrchestrator(lab, backend)
+
+        run = await orchestrator.start("p", domain_id="d4", require_ready_task=False)
+        await orchestrator.execute(run)
+
+        assert run.status == RunStatus.FAILED
+        stored = await lab.knowledge_linker.get_domain_knowledge("d4")
+        assert [a.claim for a in stored] == ["xgboost OOMs at 10M rows on this box"]
+
+    async def test_flush_is_idempotent(self, lab):
+        """Calling flush_knowledge again after execute() must not double-write."""
+        atoms = [{"claim": "only-once", "confidence": 0.7}]
+        backend = _CompletingStubBackend(events=self._events_with_text(), atoms=atoms)
+        orchestrator = AgentOrchestrator(lab, backend)
+
+        run = await orchestrator.start("p", domain_id="d5", require_ready_task=False)
+        await orchestrator.execute(run)
+        # The CLI graceful-stop path calls this explicitly; it must be a no-op
+        # here because execute()'s finally-block already flushed.
+        written = await orchestrator.flush_knowledge(run)
+
+        assert written == 0
+        assert backend.complete_calls == 1
+        stored = await lab.knowledge_linker.get_domain_knowledge("d5")
+        assert len(stored) == 1
+
+    async def test_flush_skips_when_no_transcript(self, lab):
+        """If only non-transcript events fired (e.g. just a result), there's
+        nothing to summarize and we shouldn't burn an LLM call on it."""
+        result_only = [
+            AgentEvent(
+                event_type="result",
+                data={"is_error": False, "turns": 0, "cost_usd": 0.0},
+            ),
+        ]
+        backend = _CompletingStubBackend(events=result_only, atoms=[{"claim": "x"}])
+        orchestrator = AgentOrchestrator(lab, backend)
+
+        run = await orchestrator.start("p", domain_id="d6", require_ready_task=False)
+        await orchestrator.execute(run)
+
+        assert backend.complete_calls == 0
+        assert await lab.knowledge_linker.get_domain_knowledge("d6") == []
+
+    async def test_flush_swallows_complete_failures(self, lab):
+        """If backend.complete() raises (network blip, parse error, etc.) the
+        run must still complete cleanly — flushing is best-effort."""
+        backend = _CompletingStubBackend(
+            events=self._events_with_text(),
+            raise_on_complete=RuntimeError("network down"),
+        )
+        orchestrator = AgentOrchestrator(lab, backend)
+
+        run = await orchestrator.start("p", domain_id="d7", require_ready_task=False)
+        await orchestrator.execute(run)
+
+        assert run.status == RunStatus.COMPLETED
+        assert await lab.knowledge_linker.get_domain_knowledge("d7") == []

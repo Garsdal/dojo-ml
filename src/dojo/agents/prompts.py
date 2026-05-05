@@ -76,11 +76,15 @@ so experiments and knowledge are linked to this domain.
    defines ``def train(X_train, y_train, X_test)`` returning the task-specific
    output (regression: a flat list of float predictions for X_test, in the
    same order).
-4. If — and only if — the result is non-obvious or worth carrying forward
-   (e.g. a model class beats another by a meaningful margin, a hyperparameter
-   range is dead, a feature trick helps/hurts), call ``write_knowledge`` with
-   a tight one-sentence claim and the experiment_id. Skip it for routine
-   incremental tuning.
+4. After each experiment, ask: *would a future run of this domain benefit
+   from knowing this?* If yes — a model class beats another by a meaningful
+   margin, a hyperparameter range is dead, a feature/preprocessing trick
+   helps or hurts, a hypothesis was conclusively ruled out — call
+   ``write_knowledge`` with a one-sentence claim and the experiment_id.
+   When in doubt, write it: in-loop captures are higher fidelity because you
+   still have full context. (When the run ends, the framework also runs a
+   one-shot extractor as a safety net, but don't rely on it — it sees the
+   transcript, not your reasoning.)
 5. After 2+ experiments, ``compare_experiments`` to assess progress.
 6. Iterate. Change one thing at a time between experiments.
 
@@ -129,8 +133,8 @@ so don't import or call it yourself.
   ``run_experiment`` again with the same hypothesis if the idea is still
   worth testing. Each call is its own experiment record.
 - Be systematic: change one thing at a time between experiments.
-- Be selective with ``write_knowledge`` — record only durable findings worth
-  carrying into future runs. Don't bloat the store with per-experiment recaps.
+- Use ``write_knowledge`` for durable findings, not per-experiment recaps:
+  one atom per real learning, not one per turn.
 {hints_section}"""
 
 

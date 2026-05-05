@@ -90,10 +90,12 @@ def create_knowledge_tools(lab: LabEnvironment) -> list[ToolDef]:
         ToolDef(
             name="write_knowledge",
             description=(
-                "Record a learning or insight from your experiments as a knowledge "
-                "atom. Each call creates a new immutable atom. If similar findings "
-                "already exist, they will be linked via RELATED_TO relationships. "
-                "Always do this after experiments."
+                "Record a durable finding worth carrying into future runs of this "
+                "domain. Each call creates a new immutable atom; similar atoms are "
+                "auto-linked via RELATED_TO. Use this when you've ruled out a class "
+                "of approach, found a hyperparameter range that's dead, or confirmed "
+                "a feature/preprocessing trick helps or hurts. Skip routine "
+                "incremental tuning."
             ),
             parameters={
                 "type": "object",
