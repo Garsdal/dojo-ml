@@ -13,6 +13,27 @@ for the release workflow.
 
 ## [Unreleased]
 
+## [v0.0.10] - 2026-05-05
+
+### Agent prompts
+
+- **End-of-run knowledge flush prompt rewritten** ([src/dojo/agents/summarizer.py](src/dojo/agents/summarizer.py)) — the extractor now demands TRANSFERABLE findings only and is given an explicit REJECT list (dataset shape descriptions, single-experiment hyperparameter values, running totals, single-experiment numeric results without comparison context). Capped at 3-5 atoms with calibrated-confidence anchors (≥0.7 = bet on it, ≤0.3 = weak signal). Effect: stopped runs produce few, high-signal atoms instead of dataset-shape recaps.
+
+### Added
+
+- **`knowledge_atom_created` and `knowledge_link_created` log events** ([src/dojo/runtime/keyword_linker.py](src/dojo/runtime/keyword_linker.py)) — replace the single `knowledge_linked` line. Now you can tell at a glance how many atoms were written vs. how many links per atom (CREATED_BY plus zero or more RELATED_TO).
+- **`knowledge_flush_started` / `knowledge_flush_completed` events on `run.events`** ([src/dojo/agents/summarizer.py](src/dojo/agents/summarizer.py)) — surface the end-of-run flush in the same event stream the CLI and SSE consumers already read. The CLI renders a "saving durable knowledge…" indicator and a final saved/skipped line whether you stopped via Ctrl-C or `dojo stop` from another terminal — no more silent 30-second wait.
+- **`run_finalized` sentinel event** ([src/dojo/agents/orchestrator.py](src/dojo/agents/orchestrator.py)) — emitted as the very last event on every termination path so SSE consumers can wait for it before sending `done`. The SSE generator now uses the sentinel as its primary terminator with a belt-and-braces fallback for orchestrator hard crashes.
+
+### Changed
+
+- **Confidence floor + cap on flush output** ([src/dojo/agents/summarizer.py](src/dojo/agents/summarizer.py)) — `extract_knowledge_atoms` drops atoms with `confidence < 0.5` and truncates to at most 5. Non-numeric / null `confidence` values normalise to 0.5 instead of raising and silently killing the batch. The normalised value is written back onto the atom dict so downstream casts don't re-raise.
+- **`_graceful_stop` no longer prints inline** ([src/dojo/cli/run.py](src/dojo/cli/run.py)) — flush indicators come from the events now, removing the duplicate-print risk on dual-flush paths. `_stream_events` returns its rendered count so the post-stop block can drain remaining events without double-printing.
+
+### Removed
+
+- **Orphaned `src/dojo/runtime/knowledge_linker.py` duplicate** — a stale near-copy of `keyword_linker.py` that didn't implement the `KnowledgeLinker` interface and had no imports anywhere.
+
 ## [v0.0.9] - 2026-05-05
 
 ### Agent prompts
