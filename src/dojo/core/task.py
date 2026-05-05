@@ -308,6 +308,7 @@ TASK_TYPE_REGISTRY: ClassVar[dict[TaskType, TaskTypeSpec]] = {
                     "X_test": "list of lists (float)",
                     "y_train": "list of float",
                     "y_test": "list of float",
+                    "artifacts_dir": "Path",
                 },
                 returns_schema={
                     "rmse": "float",
@@ -337,7 +338,7 @@ TASK_TYPE_REGISTRY: ClassVar[dict[TaskType, TaskTypeSpec]] = {
             'artifacts_dir=Path(os.environ["DOJO_ARTIFACTS_DIR"]))'
         ),
         verifier_script=_REGRESSION_VERIFIER,
-        contract_version=2,
+        contract_version=3,
         train_output_description="a flat list of float predictions for the test set, in the same order as X_test from load_data()",
         runner_prelude=(
             "from load_data import load_data\n    X_train, X_test, y_train, y_test = load_data()"

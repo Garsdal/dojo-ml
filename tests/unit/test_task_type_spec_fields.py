@@ -18,7 +18,7 @@ def test_regression_spec_has_contract_version():
 def test_regression_evaluate_contract_includes_train_test_splits():
     spec = TASK_TYPE_REGISTRY[TaskType.REGRESSION]
     evaluate = next(c for c in spec.required_tools if c.name == "evaluate")
-    for key in ["y_pred", "X_train", "X_test", "y_train", "y_test"]:
+    for key in ["y_pred", "X_train", "X_test", "y_train", "y_test", "artifacts_dir"]:
         assert key in evaluate.params_schema, evaluate.params_schema
 
 
@@ -58,3 +58,8 @@ def test_regression_spec_has_verifier_script():
     assert "evaluate" in spec.verifier_script
     assert "__DOJO_TOOL_RESULT__" in spec.verifier_script
     assert "__DOJO_TOOL_ERROR__" in spec.verifier_script
+
+
+def test_regression_contract_version_is_at_least_3():
+    spec = TASK_TYPE_REGISTRY[TaskType.REGRESSION]
+    assert spec.contract_version >= 3
