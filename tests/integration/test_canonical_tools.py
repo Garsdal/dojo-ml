@@ -26,7 +26,7 @@ _HONEST_EVALUATE = """\
 import math
 
 
-def evaluate(y_pred, *, X_train, X_test, y_train, y_test):
+def evaluate(y_pred, *, X_train, X_test, y_train, y_test, artifacts_dir=None):
     diffs = [a - b for a, b in zip(y_pred, y_test, strict=True)]
     mse = sum(d * d for d in diffs) / len(diffs)
     mae = sum(abs(d) for d in diffs) / len(diffs)

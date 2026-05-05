@@ -24,7 +24,7 @@ _LOAD_DATA = textwrap.dedent(
 
 _EVALUATE = textwrap.dedent(
     """
-    def evaluate(y_pred, *, X_train, X_test, y_train, y_test):
+    def evaluate(y_pred, *, X_train, X_test, y_train, y_test, artifacts_dir=None):
         diffs = [abs(a - b) for a, b in zip(y_test, y_pred)]
         mae = sum(diffs) / len(diffs)
         return {"rmse": mae, "r2": 0.0, "mae": mae}

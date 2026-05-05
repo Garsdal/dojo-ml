@@ -23,7 +23,7 @@ def load_data():
 """
 
 _EVALUATE = """\
-def evaluate(y_pred, *, X_train, X_test, y_train, y_test):
+def evaluate(y_pred, *, X_train, X_test, y_train, y_test, artifacts_dir=None):
     diffs = [a - b for a, b in zip(y_pred, y_test)]
     return {
         "rmse": (sum(d * d for d in diffs) / len(diffs)) ** 0.5,

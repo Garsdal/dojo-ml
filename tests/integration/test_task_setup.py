@@ -33,7 +33,7 @@ _CANNED_TOOLS_JSON = """[
     "entrypoint": "evaluate",
     "description": "Compute rmse / r2 / mae against y_test",
     "type": "evaluator",
-    "code": "import math\\n\\ndef evaluate(y_pred, *, X_train, X_test, y_train, y_test):\\n    diffs = [a - b for a, b in zip(y_pred, y_test)]\\n    mse = sum(d*d for d in diffs)/len(diffs)\\n    mae = sum(abs(d) for d in diffs)/len(diffs)\\n    return {\\"rmse\\": math.sqrt(mse), \\"r2\\": 1.0, \\"mae\\": mae}\\n"
+    "code": "import math\\n\\ndef evaluate(y_pred, *, X_train, X_test, y_train, y_test, artifacts_dir=None):\\n    diffs = [a - b for a, b in zip(y_pred, y_test)]\\n    mse = sum(d*d for d in diffs)/len(diffs)\\n    mae = sum(abs(d) for d in diffs)/len(diffs)\\n    return {\\"rmse\\": math.sqrt(mse), \\"r2\\": 1.0, \\"mae\\": mae}\\n"
   }
 ]"""
 
