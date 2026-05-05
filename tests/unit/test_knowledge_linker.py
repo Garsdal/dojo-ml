@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import pytest
+import structlog.testing
 
 from dojo.runtime.keyword_linker import KeywordKnowledgeLinker
 from dojo.storage.local import LocalKnowledgeLinkStore, LocalMemoryStore
@@ -176,3 +177,52 @@ async def test_get_atom_links(linker: KeywordKnowledgeLinker):
     links = await linker.get_atom_links(result.atom_id)
     assert len(links) >= 1
     assert links[0].atom_id == result.atom_id
+
+
+async def test_emits_atom_created_and_link_created_events(
+    linker: KeywordKnowledgeLinker,
+):
+    """produce_knowledge emits one knowledge_atom_created event always,
+    and one knowledge_link_created per link written."""
+    with structlog.testing.capture_logs() as cap:
+        # First atom — no prior atoms so only CREATED_BY link.
+        await linker.produce_knowledge(
+            context="ctx-A",
+            claim="claim about gradient boosting on tabular data",
+            experiment_id="exp-1",
+            domain_id="dom-1",
+        )
+
+    events = [r["event"] for r in cap]
+    assert "knowledge_atom_created" in events
+    # CREATED_BY is the only link for the first atom.
+    assert events.count("knowledge_link_created") == 1
+    # Old aggregate event is gone.
+    assert "knowledge_linked" not in events
+
+
+async def test_link_created_event_per_related_link(
+    linker: KeywordKnowledgeLinker,
+):
+    """A second similar atom triggers an additional knowledge_link_created
+    event for the RELATED_TO link."""
+    # Produce a first atom (not under capture — we only care about the second).
+    await linker.produce_knowledge(
+        context="housing price prediction with gradient boosting",
+        claim="random forests outperform linear regression on tabular housing data",
+        experiment_id="exp-1",
+        domain_id="dom-1",
+    )
+
+    with structlog.testing.capture_logs() as cap:
+        await linker.produce_knowledge(
+            context="extended housing price prediction with cross-validation",
+            claim="random forests outperform linear regression on tabular housing data again",
+            experiment_id="exp-2",
+            domain_id="dom-1",
+        )
+
+    events = [r["event"] for r in cap]
+    assert events.count("knowledge_atom_created") == 1
+    # CREATED_BY + 1 RELATED_TO = 2 link events.
+    assert events.count("knowledge_link_created") == 2

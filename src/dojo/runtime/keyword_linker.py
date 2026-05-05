@@ -67,6 +67,13 @@ class KeywordKnowledgeLinker(KnowledgeLinker):
             version=1,
         )
         await self._memory.add(atom)
+        logger.info(
+            "knowledge_atom_created",
+            atom_id=atom.id,
+            domain_id=domain_id,
+            experiment_id=experiment_id,
+            confidence=confidence,
+        )
 
         # 2. Find similar existing atoms (for grouping, not merging)
         similar = await self.find_similar(context, claim, exclude_id=atom.id)
@@ -80,6 +87,13 @@ class KeywordKnowledgeLinker(KnowledgeLinker):
                 link_type=LinkType.CREATED_BY,
             )
             await self._links.link(link)
+            logger.info(
+                "knowledge_link_created",
+                atom_id=atom.id,
+                link_type=LinkType.CREATED_BY.value,
+                domain_id=domain_id,
+                experiment_id=experiment_id,
+            )
 
         # 4. Create RELATED_TO links to similar atoms
         related_ids: list[str] = []
@@ -92,14 +106,15 @@ class KeywordKnowledgeLinker(KnowledgeLinker):
                 related_atom_id=existing.id,
             )
             await self._links.link(rel_link)
+            logger.info(
+                "knowledge_link_created",
+                atom_id=atom.id,
+                link_type=LinkType.RELATED_TO.value,
+                related_atom_id=existing.id,
+                domain_id=domain_id,
+                experiment_id=experiment_id,
+            )
             related_ids.append(existing.id)
-
-        logger.info(
-            "knowledge_linked",
-            atom_id=atom.id,
-            action="created",
-            related_count=len(related_ids),
-        )
 
         return LinkingResult(
             atom_id=atom.id,
