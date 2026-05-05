@@ -263,7 +263,10 @@ except Exception as _e:
 try:
     from evaluate import evaluate as _evaluate
     _artifacts_dir = _HERE / "artifacts"
-    _artifacts_dir.mkdir(exist_ok=True)
+    if _artifacts_dir.exists():
+        import shutil as _shutil
+        _shutil.rmtree(_artifacts_dir)
+    _artifacts_dir.mkdir()
     _metrics = _evaluate(y_test, X_train=X_train, X_test=X_test, y_train=y_train, y_test=y_test, artifacts_dir=_artifacts_dir)
     if not isinstance(_metrics, dict):
         raise ValueError(
