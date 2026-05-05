@@ -11,6 +11,15 @@ from dojo.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
+# Atoms with confidence below this floor are discarded as a backstop against
+# over-confident defaults. The prompt asks the model to calibrate, but we don't
+# trust calibration alone.
+_CONFIDENCE_FLOOR = 0.5
+
+# Hard cap on flush output. The prompt asks for 3-5; this stops the model from
+# returning a larger list when it disregards the instruction.
+_MAX_ATOMS = 5
+
 
 def collect_transcript(events: list[AgentEvent]) -> str:
     """Compress an event list into a transcript suitable for one-shot LLM review."""
@@ -36,22 +45,30 @@ async def extract_knowledge_atoms(
     """One-shot LLM call asking for durable findings, returned as a JSON list.
 
     Returns [] when the backend can't do completions (e.g. the stub) or the
-    response can't be parsed.
+    response can't be parsed. Filters out atoms below the confidence floor and
+    caps the output length.
     """
     prompt = (
         "You are reviewing the transcript of an autonomous ML research agent. "
-        "Extract only durable findings that future runs of this domain "
-        f"(domain_id={domain_id}) would benefit from knowing.\n\n"
-        "Examples of what counts:\n"
-        "- 'GradientBoosting beat LinearRegression by ~40% MAE on this dataset' "
-        "(carry-forward signal)\n"
-        "- 'lightgbm and xgboost are NOT installed in this workspace' (avoid future failures)\n"
-        "- 'Quadratic feature engineering hurt HistGBM' (saves dead-end retries)\n\n"
-        "Skip routine incremental tuning ('tried n_estimators=1000'). Skip running totals.\n\n"
+        f"Extract only TRANSFERABLE findings that future runs of domain "
+        f"{domain_id} (or related domains) would benefit from knowing. "
+        "Aim for 3-5 atoms maximum — pick the highest-signal lessons.\n\n"
+        "INCLUDE:\n"
+        "- Modeling lessons that generalise (e.g. 'tree models beat linear on this dataset shape')\n"
+        "- Dead-ends worth avoiding (e.g. 'quadratic feature engineering hurt HistGBM')\n"
+        "- Environment gotchas (e.g. 'lightgbm is not installed in this workspace')\n"
+        "- Anti-patterns (e.g. 'dropping NaNs before split caused leakage')\n\n"
+        "REJECT:\n"
+        "- Dataset shape descriptions (row count, column count, column names, schema)\n"
+        "- Single-experiment hyperparameter values ('tried n_estimators=1000')\n"
+        "- Running totals or progress recaps\n"
+        "- Single-experiment numeric results without comparison context\n\n"
+        "Calibrate confidence: ≥0.7 = 'I'd bet on this in the next run'. "
+        "≤0.3 = 'weak signal, only worth recording if novel'.\n\n"
         "Output ONLY a JSON array (possibly empty) of objects with keys:\n"
         '- "claim": one-sentence finding (required)\n'
         '- "context": short phrase, e.g. "early baseline runs" (optional)\n'
-        '- "confidence": float 0.0-1.0 calibrated to evidence (optional)\n'
+        '- "confidence": float 0.0-1.0 calibrated to evidence (optional, default 0.5)\n'
         '- "experiment_id": ULID if known from transcript (optional)\n\n'
         "If nothing is durable, output [].\n\n"
         "Transcript:\n"
@@ -74,7 +91,16 @@ async def extract_knowledge_atoms(
         return []
     if not isinstance(atoms, list):
         return []
-    return [a for a in atoms if isinstance(a, dict) and a.get("claim")]
+
+    cleaned: list[dict] = []
+    for a in atoms:
+        if not isinstance(a, dict) or not a.get("claim"):
+            continue
+        confidence = float(a.get("confidence", 0.5))
+        if confidence < _CONFIDENCE_FLOOR:
+            continue
+        cleaned.append(a)
+    return cleaned[:_MAX_ATOMS]
 
 
 async def flush_run_knowledge(
