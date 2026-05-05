@@ -13,6 +13,20 @@ for the release workflow.
 
 ## [Unreleased]
 
+## [v0.0.9] - 2026-05-05
+
+### Agent prompts
+
+(none in this release)
+
+### Changed
+
+- **`evaluate` contract — `artifacts_dir` parameter** ([src/dojo/core/task.py](src/dojo/core/task.py)) — `evaluate(y_pred, *, X_train, X_test, y_train, y_test)` is now `evaluate(y_pred, *, X_train, X_test, y_train, y_test, artifacts_dir)`. The framework passes a real, per-run writable directory; `evaluate` may write plots or diagnostics there, or ignore the parameter. Replaces the `DOJO_ARTIFACTS_DIR` env-var convention that was leaking into AI-generated tool code and crashing `dojo task setup` verification. Contract version bumped 2 → 3 — existing frozen tasks must be re-generated with `dojo task setup`.
+
+### Fixed
+
+- **`dojo task setup` — evaluate verification crash** ([src/dojo/runtime/tool_verifier.py](src/dojo/runtime/tool_verifier.py)) — the verifier subprocess now provides `artifacts_dir` to `evaluate` via a temporary directory rather than relying on `DOJO_ARTIFACTS_DIR` being set. Previously any AI-generated `evaluate.py` that wrote artifacts (e.g. evaluation summary plots) would raise `KeyError: 'DOJO_ARTIFACTS_DIR'` during verification and prevent the task from being frozen.
+
 ## [v0.0.8] - 2026-05-05
 
 ### Agent prompts
