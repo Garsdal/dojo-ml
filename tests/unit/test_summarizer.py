@@ -5,7 +5,8 @@ from __future__ import annotations
 import json
 
 from dojo.agents.backend import AgentBackend
-from dojo.agents.summarizer import extract_knowledge_atoms
+from dojo.agents.summarizer import extract_knowledge_atoms, flush_run_knowledge
+from dojo.agents.types import AgentEvent
 
 
 class _FakeBackend(AgentBackend):
@@ -97,3 +98,59 @@ async def test_non_numeric_confidence_treated_as_default():
     assert "string-confidence atom" in claims
     assert "null-confidence atom" in claims
     assert "good atom" in claims
+
+
+class _LabStub:
+    """Minimal lab stub exposing only what flush_run_knowledge touches."""
+
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+        class _Linker:
+            async def produce_knowledge(_self, **kwargs):
+                self.calls.append(kwargs)
+                return None
+
+        self.knowledge_linker = _Linker()
+
+
+async def test_flush_emits_start_and_completed_events_on_success():
+    backend = _FakeBackend(json.dumps([{"claim": "good lesson", "confidence": 0.8}]))
+    events: list[AgentEvent] = [AgentEvent(event_type="text", data={"text": "transcript content"})]
+    lab = _LabStub()
+
+    written = await flush_run_knowledge(backend, lab, events=events, domain_id="d", run_id="r")
+
+    types = [e.event_type for e in events]
+    assert "knowledge_flush_started" in types
+    assert "knowledge_flush_completed" in types
+    completed = next(e for e in events if e.event_type == "knowledge_flush_completed")
+    assert completed.data == {"count": written}
+    assert written == 1
+
+
+async def test_flush_emits_completed_with_error_on_extract_failure():
+    class _Boom(_FakeBackend):
+        async def complete(self, prompt: str) -> str:
+            raise RuntimeError("model unavailable")
+
+    backend = _Boom("")
+    events: list[AgentEvent] = [AgentEvent(event_type="text", data={"text": "transcript content"})]
+    lab = _LabStub()
+
+    written = await flush_run_knowledge(backend, lab, events=events, domain_id="d", run_id="r")
+    assert written == 0
+    completed = next(e for e in events if e.event_type == "knowledge_flush_completed")
+    assert "error" in completed.data
+    assert "model unavailable" in completed.data["error"]
+
+
+async def test_flush_emits_no_events_when_transcript_empty():
+    """An empty transcript skips the flush entirely — no user-visible events."""
+    backend = _FakeBackend("[]")
+    events: list[AgentEvent] = []  # empty transcript
+    lab = _LabStub()
+
+    written = await flush_run_knowledge(backend, lab, events=events, domain_id="d", run_id="r")
+    assert written == 0
+    assert events == []  # untouched

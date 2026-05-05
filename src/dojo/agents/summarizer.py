@@ -118,6 +118,9 @@ async def flush_run_knowledge(
 ) -> int:
     """Extract durable findings from a finished run and persist them as atoms.
 
+    Appends ``knowledge_flush_started`` and ``knowledge_flush_completed`` events
+    to the provided ``events`` list so CLI / SSE consumers can render progress.
+
     Returns the number of atoms written. Safe to call when the backend can't
     do completions (e.g. the stub) — returns 0 instead of raising.
     """
@@ -125,10 +128,13 @@ async def flush_run_knowledge(
     if not transcript.strip():
         return 0
 
+    events.append(AgentEvent(event_type="knowledge_flush_started", data={}))
+
     try:
         atoms = await extract_knowledge_atoms(backend, transcript, domain_id)
     except Exception as e:
         logger.warning("knowledge_flush_extract_failed", run_id=run_id, error=str(e))
+        events.append(AgentEvent(event_type="knowledge_flush_completed", data={"error": str(e)}))
         return 0
 
     written = 0
@@ -147,6 +153,7 @@ async def flush_run_knowledge(
         except Exception as e:
             logger.warning("knowledge_flush_atom_write_failed", run_id=run_id, error=str(e))
 
+    events.append(AgentEvent(event_type="knowledge_flush_completed", data={"count": written}))
     if written:
         logger.info("knowledge_flushed", run_id=run_id, atoms=written)
     return written

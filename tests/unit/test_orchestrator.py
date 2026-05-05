@@ -314,7 +314,9 @@ class TestAgentOrchestrator:
         assert event_types[0] == "text"
         assert "tool_call" in event_types
         assert "tool_result" in event_types
-        assert event_types[-1] == "result"
+        assert "result" in event_types
+        # After the run completes, the knowledge flush appends its own events.
+        assert event_types[-1] == "knowledge_flush_completed"
 
 
 class TestOrchestratorTaskGate:
