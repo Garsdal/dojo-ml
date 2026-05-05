@@ -262,7 +262,9 @@ except Exception as _e:
 
 try:
     from evaluate import evaluate as _evaluate
-    _metrics = _evaluate(y_test, X_train=X_train, X_test=X_test, y_train=y_train, y_test=y_test)
+    _artifacts_dir = _HERE / "artifacts"
+    _artifacts_dir.mkdir(exist_ok=True)
+    _metrics = _evaluate(y_test, X_train=X_train, X_test=X_test, y_train=y_train, y_test=y_test, artifacts_dir=_artifacts_dir)
     if not isinstance(_metrics, dict):
         raise ValueError(
             f"evaluate must return a dict, got {type(_metrics).__name__}"

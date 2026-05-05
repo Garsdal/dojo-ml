@@ -51,7 +51,7 @@ GOOD_EVALUATE = """\
 import math
 
 
-def evaluate(y_pred, *, X_train, X_test, y_train, y_test):
+def evaluate(y_pred, *, X_train, X_test, y_train, y_test, artifacts_dir):
     diffs = [a - b for a, b in zip(y_pred, y_test)]
     mse = sum(d * d for d in diffs) / len(diffs)
     mae = sum(abs(d) for d in diffs) / len(diffs)
@@ -60,19 +60,19 @@ def evaluate(y_pred, *, X_train, X_test, y_train, y_test):
 
 # Returns wrong shape — list instead of dict
 BAD_EVALUATE_SHAPE = """\
-def evaluate(y_pred, *, X_train, X_test, y_train, y_test):
+def evaluate(y_pred, *, X_train, X_test, y_train, y_test, artifacts_dir):
     return [1, 2, 3]
 """
 
 # Crashes
 BAD_EVALUATE_RAISES = """\
-def evaluate(y_pred, *, X_train, X_test, y_train, y_test):
+def evaluate(y_pred, *, X_train, X_test, y_train, y_test, artifacts_dir):
     raise RuntimeError("boom")
 """
 
 # Missing key in returned dict
 BAD_EVALUATE_MISSING_KEY = """\
-def evaluate(y_pred, *, X_train, X_test, y_train, y_test):
+def evaluate(y_pred, *, X_train, X_test, y_train, y_test, artifacts_dir):
     return {"rmse": 0.5, "r2": 0.9}  # mae missing
 """
 
@@ -241,7 +241,7 @@ import math
 from load_data import load_data
 
 
-def evaluate(y_pred, *, X_train, X_test, y_train, y_test):
+def evaluate(y_pred, *, X_train, X_test, y_train, y_test, artifacts_dir):
     diffs = [a - b for a, b in zip(y_pred, y_test)]
     mse = sum(d * d for d in diffs) / len(diffs)
     mae = sum(abs(d) for d in diffs) / len(diffs)
@@ -268,3 +268,29 @@ async def test_verify_sample_output_populated_for_evaluate():
     await verify_required_tools([load, evaluate], task, sandbox=LocalSandbox(), workspace=None)
     assert evaluate.verification is not None and evaluate.verification.verified
     assert {"rmse", "r2", "mae"}.issubset(evaluate.verification.sample_output.keys())
+
+
+async def test_evaluate_receives_artifacts_dir():
+    """evaluate with artifacts_dir in its signature must verify successfully,
+    and writing a file into artifacts_dir must not crash verification."""
+    load = _module_tool("load_data", GOOD_LOAD_DATA)
+    evaluate_writes = _module_tool(
+        "evaluate",
+        """\
+import math
+
+
+def evaluate(y_pred, *, X_train, X_test, y_train, y_test, artifacts_dir):
+    (artifacts_dir / "summary.txt").write_text("ok")
+    diffs = [a - b for a, b in zip(y_pred, y_test)]
+    mse = sum(d * d for d in diffs) / len(diffs)
+    mae = sum(abs(d) for d in diffs) / len(diffs)
+    return {"rmse": math.sqrt(mse), "r2": 1.0, "mae": mae}
+""",
+    )
+    task = Task(type=TaskType.REGRESSION)
+    await verify_required_tools(
+        [load, evaluate_writes], task, sandbox=LocalSandbox(), workspace=None
+    )
+    assert evaluate_writes.verification is not None
+    assert evaluate_writes.verification.verified is True, evaluate_writes.verification.errors
