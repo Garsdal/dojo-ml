@@ -59,7 +59,8 @@ def render_runner(
         extra_paths = f"sys.path.insert(0, {train_dir!r})\n"
     prelude_lines = f"    {prelude}\n" if prelude else ""
     return f"""\
-import json, sys, traceback
+import json, os, sys, traceback
+from pathlib import Path
 sys.path.insert(0, {workspace_dir!r})
 sys.path.insert(0, {canonical_dir!r})
 {extra_paths}

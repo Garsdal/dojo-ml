@@ -28,6 +28,8 @@ def test_regression_runner_callsite_passes_data_to_train_and_evaluate():
     assert "train(X_train, y_train, X_test)" in callsite
     assert "X_train=X_train" in callsite
     assert "y_test=y_test" in callsite
+    assert "artifacts_dir=" in callsite
+    assert "DOJO_ARTIFACTS_DIR" in callsite
 
 
 def test_regression_prompt_specifies_new_evaluate_signature():

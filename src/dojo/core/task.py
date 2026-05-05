@@ -342,7 +342,8 @@ TASK_TYPE_REGISTRY: ClassVar[dict[TaskType, TaskTypeSpec]] = {
             "X_train=X_train, "
             "X_test=X_test, "
             "y_train=y_train, "
-            "y_test=y_test)"
+            "y_test=y_test, "
+            'artifacts_dir=Path(os.environ["DOJO_ARTIFACTS_DIR"]))'
         ),
         verifier_script=_REGRESSION_VERIFIER,
         contract_version=2,
