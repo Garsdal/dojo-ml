@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -71,6 +72,7 @@ class AgentOrchestrator:
         domain_id: str,
         tool_hints: list[ToolHint] | None = None,
         require_ready_task: bool = True,
+        progress: Callable[[str], None] | None = None,
     ) -> AgentRun:
         """Prepare an agent run: validate the task contract, configure backend.
 
@@ -79,17 +81,30 @@ class AgentOrchestrator:
         ``require_ready_task=False`` only for tests / debug flows that
         intentionally bypass the gate.
 
+        ``progress`` is an optional sync callback that receives short
+        human-readable phase labels. The CLI uses it to render a phased
+        spinner during the otherwise-silent setup window before SSE events
+        begin flowing. When ``progress=None`` behaviour is identical to
+        before this hook existed.
+
         Does not start execution — call execute() separately (usually in a
         background task).
         """
+
+        def _emit(label: str) -> None:
+            if progress is not None:
+                progress(label)
+
         # Load domain first so we can run the contract check before persisting
         # any run state. Failing fast keeps disk clean.
+        _emit("loading domain context")
         domain = await self.lab.domain_store.load(domain_id)
         if require_ready_task:
             if domain is None:
                 raise TaskNotReadyError(
                     f"Domain {domain_id!r} not found. Create one with `dojo init`."
                 )
+            _emit("checking task readiness")
             TaskService(self.lab).assert_ready(domain_id, domain.task)
 
         run = AgentRun(
@@ -105,6 +120,7 @@ class AgentOrchestrator:
         accumulated_knowledge: list[str] = []
 
         if domain is not None:
+            _emit("indexing prior knowledge")
             atoms = await self.lab.knowledge_linker.get_domain_knowledge(domain_id)
             accumulated_knowledge = [f"- [{a.confidence:.1f}] {a.claim}" for a in atoms[:20]]
 
@@ -144,6 +160,7 @@ class AgentOrchestrator:
         tool_defs = collect_all_tools(self.lab, domain=domain)
 
         # Configure the backend with tools and config
+        _emit("configuring agent backend")
         await self.backend.configure(tool_defs, config)
 
         return run
