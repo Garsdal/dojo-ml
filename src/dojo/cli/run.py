@@ -92,18 +92,27 @@ async def _run_async(
         cwd=settings.agent.cwd,
     )
 
-    try:
-        run_obj = await orchestrator.start(prompt=prompt, domain_id=d.id)
-    except TaskNotReadyError as e:
-        console.print(f"[red]✗ task not ready:[/red] {e}")
-        console.print(
-            "\n  fix: [bold]dojo task generate[/bold] then "
-            "[bold]dojo task freeze[/bold] (or `dojo task setup` to do both)."
-        )
-        raise typer.Exit(code=EXIT_TASK_NOT_READY) from e
-    except Exception as e:
-        console.print(f"[red]failed to start run:[/red] {e}")
-        raise typer.Exit(code=EXIT_SYSTEM_ERROR) from e
+    with console.status("[dim]starting agent run…[/dim]") as status:
+
+        def _on_phase(label: str) -> None:
+            status.update(f"[dim]{label}…[/dim]")
+
+        try:
+            run_obj = await orchestrator.start(
+                prompt=prompt,
+                domain_id=d.id,
+                progress=_on_phase,
+            )
+        except TaskNotReadyError as e:
+            console.print(f"[red]✗ task not ready:[/red] {e}")
+            console.print(
+                "\n  fix: [bold]dojo task generate[/bold] then "
+                "[bold]dojo task freeze[/bold] (or `dojo task setup` to do both)."
+            )
+            raise typer.Exit(code=EXIT_TASK_NOT_READY) from e
+        except Exception as e:
+            console.print(f"[red]failed to start run:[/red] {e}")
+            raise typer.Exit(code=EXIT_SYSTEM_ERROR) from e
 
     set_current_run_id(base_dir, run_obj.id)
 
