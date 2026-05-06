@@ -48,11 +48,11 @@ def create_experiment_tools(lab: LabEnvironment) -> list[ToolDef]:
         """Run a complete train + evaluate experiment in one subprocess.
 
         The agent submits ``train_code`` (a Python module defining
-        ``def train(X_train, y_train, X_test)``); the framework writes it
-        alongside an auto-generated runner stub, executes the runner, parses
-        metrics from the stdout marker, and transitions the experiment state.
-        Anti-cheating: ``evaluate`` is imported from the domain's canonical,
-        frozen path — the agent cannot redefine it.
+        ``def train(X_train, y_train, X_test, *, artifacts_dir)``); the
+        framework writes it alongside an auto-generated runner stub, executes
+        the runner, parses metrics from the stdout marker, and transitions
+        the experiment state. Anti-cheating: ``evaluate`` is imported from
+        the domain's canonical, frozen path — the agent cannot redefine it.
         """
         domain_id = args["domain_id"]
         hypothesis_text = args["hypothesis"]
@@ -216,14 +216,16 @@ def create_experiment_tools(lab: LabEnvironment) -> list[ToolDef]:
             description=(
                 "Run a single train+evaluate experiment in one subprocess. "
                 "Pass `train_code` as a Python module that defines "
-                "`def train(X_train, y_train, X_test) -> y_pred` returning the "
-                "task-specific output (regression: a flat list of float "
-                "predictions for X_test, in input order). The framework loads "
-                "the data once and calls your train function with the splits "
-                "as parameters — DO NOT call `load_data()` from inside train. "
-                "After train returns, the framework calls the canonical "
+                "`def train(X_train, y_train, X_test, *, artifacts_dir) -> y_pred` "
+                "returning the task-specific output (regression: a flat list of "
+                "float predictions for X_test, in input order). The framework "
+                "loads the data once and calls your train function with the "
+                "splits — DO NOT call `load_data()` from inside train. After "
+                "train returns, the framework calls the canonical "
                 "`evaluate(y_pred, X_train=..., X_test=..., y_train=..., "
-                "y_test=...)` and records the metrics on the experiment."
+                "y_test=..., artifacts_dir=...)` and records the metrics. "
+                "Both train and evaluate share the same `artifacts_dir` — "
+                "anything written there is archived for the experiment."
             ),
             parameters={
                 "type": "object",
@@ -240,20 +242,23 @@ def create_experiment_tools(lab: LabEnvironment) -> list[ToolDef]:
                         "type": "string",
                         "description": (
                             "Python source defining "
-                            "`def train(X_train, y_train, X_test) -> y_pred`. "
-                            "Returns a flat list of float predictions for "
-                            "X_test in input order. The framework supplies "
-                            "the data — do NOT call `load_data()` from inside "
-                            "`train`. May use any standard libs available in "
+                            "`def train(X_train, y_train, X_test, *, "
+                            "artifacts_dir) -> y_pred`. Returns a flat list of "
+                            "float predictions for X_test in input order. The "
+                            "framework supplies the data — do NOT call "
+                            "`load_data()` from inside `train`. `artifacts_dir` "
+                            "is a writable Path; saving to it is optional and "
+                            "the agent's call (model checkpoints, training "
+                            "plots). May use any standard libs available in "
                             "the workspace."
                         ),
                     },
                     "variables": {
                         "type": "object",
                         "description": (
-                            "Optional hypothesis variables (e.g. {'model': 'ridge', "
-                            "'alpha': 1.0}). Recorded for traceability; not used "
-                            "by the runner."
+                            "Optional hypothesis variables (e.g. {'model': "
+                            "'ridge', 'alpha': 1.0}). Recorded for "
+                            "traceability; not used by the runner."
                         ),
                     },
                 },
