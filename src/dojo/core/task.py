@@ -97,8 +97,8 @@ You are generating Python tool **modules** for a regression ML task.
 Domain: {domain_name}
 {domain_description}
 
-{program_md_section}
-## Structured hints (optional — PROGRAM.md wins if they conflict)
+{setup_md_section}
+## Structured hints (optional — SETUP.md wins if they conflict)
   data_path: {data_path}
   target_column: {target_column}
   test_split_ratio: {test_split_ratio}
@@ -107,8 +107,8 @@ Domain: {domain_name}
 {hint_section}
 
 ## How to read this
-- The PROGRAM.md block above is the user's spec — it tells you where the data
-  lives and what the target is, in plain English. Trust it.
+- The SETUP.md block above is the user's data + evaluation spec — it tells you
+  where the data lives and what the target is, in plain English. Trust it.
 - It contains two paired sections that map 1:1 onto the modules you're writing:
     - `## Dataset` ⟶ steers `load_data.py`. Read this before writing module 1.
     - `## Evaluate` ⟶ steers what goes *inside* `evaluate.py`. Read this before
@@ -122,7 +122,7 @@ Domain: {domain_name}
   and NO column name. Use the loader directly:
     from sklearn.datasets import fetch_california_housing
     X, y = fetch_california_housing(return_X_y=True)
-- For local CSVs, use the data_path / target_column hints if PROGRAM.md
+- For local CSVs, use the data_path / target_column hints if SETUP.md
   doesn't give you better info.
 - For URLs, download via pandas/requests (the workspace has internet).
 - If the user's `## Dataset` describes an expensive fetch, **cache the result
@@ -172,7 +172,7 @@ Output format (respond with ONLY this JSON, no markdown):
     "name": "load_data",
     "filename": "load_data.py",
     "entrypoint": "load_data",
-    "description": "Load and split the dataset described in PROGRAM.md",
+    "description": "Load and split the dataset described in SETUP.md",
     "type": "data_loader",
     "code": "<python module source as a string>"
   }},

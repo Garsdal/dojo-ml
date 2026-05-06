@@ -10,7 +10,7 @@ from dojo.core.domain import Domain, DomainStatus, DomainTool, ToolType
 from dojo.core.task import Task, TaskType
 from dojo.runtime.domain_service import DomainService
 from dojo.runtime.lab import LabEnvironment
-from dojo.runtime.program_loader import load_program
+from dojo.runtime.setup_loader import load_setup
 from dojo.runtime.task_service import TaskFrozenError, TaskService, TaskVerificationError
 from dojo.runtime.tool_verifier import verify_required_tools
 from dojo.tools.tool_generation import (
@@ -541,9 +541,9 @@ async def generate_tools(
         )
 
     if domain.task is not None:
-        program_md = load_program(domain, base_dir=Path(lab.settings.storage.base_dir))
+        setup_md = load_setup(domain, base_dir=Path(lab.settings.storage.base_dir))
         prompt = build_task_generation_prompt(
-            domain, domain.task, hint=body.hint, program_md=program_md
+            domain, domain.task, hint=body.hint, setup_md=setup_md
         )
     else:
         prompt = build_tool_generation_prompt(domain, hint=body.hint)

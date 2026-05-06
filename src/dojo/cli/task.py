@@ -13,7 +13,7 @@ from dojo.cli._lab import build_cli_lab
 from dojo.cli.state import CLIStateError, resolve_domain
 from dojo.core.domain import Domain, DomainTool
 from dojo.runtime.lab import LabEnvironment
-from dojo.runtime.program_loader import load_program, resolve_program_path
+from dojo.runtime.setup_loader import load_setup, resolve_setup_path
 from dojo.runtime.task_service import (
     TaskFrozenError,
     TaskService,
@@ -132,7 +132,7 @@ def freeze(
 ) -> None:
     """Freeze the current domain's task — required before agent runs are allowed.
 
-    Rejects (exit 3) if any required tool isn't verified. Edit `PROGRAM.md`
+    Rejects (exit 3) if any required tool isn't verified. Edit `SETUP.md`
     (or pass --hint to generate) and re-run `dojo task setup`.
     """
 
@@ -179,7 +179,7 @@ def setup(
     ),
     timeout: float | None = typer.Option(None, "--timeout", help=DEFAULT_VERIFICATION_TIMEOUT_HELP),
 ) -> None:
-    """One-shot: generate tools from PROGRAM.md, verify them, freeze the task."""
+    """One-shot: generate tools from SETUP.md, verify them, freeze the task."""
 
     async def _run() -> None:
         lab, d, _ = await _resolve(override=domain)
@@ -221,15 +221,15 @@ async def _do_generate(
         raise typer.Exit(code=EXIT_USER_ERROR)
 
     base_dir = Path(lab.settings.storage.base_dir)
-    program_path = resolve_program_path(d, base_dir=base_dir)
-    program_md = load_program(d, base_dir=base_dir)
-    prompt = build_task_generation_prompt(d, d.task, hint, program_md=program_md)
+    setup_path = resolve_setup_path(d, base_dir=base_dir)
+    setup_md = load_setup(d, base_dir=base_dir)
+    prompt = build_task_generation_prompt(d, d.task, hint, setup_md=setup_md)
     backend = create_agent_backend(
         lab.settings.agent.backend,
         model=lab.settings.agent.tool_generation_model,
     )
 
-    console.print(f"[dim]reading[/dim] [cyan]{program_path}[/cyan]")
+    console.print(f"[dim]reading[/dim] [cyan]{setup_path}[/cyan]")
     label = f"{backend.name} ({backend.model})" if backend.model else backend.name
     console.print(
         f"[dim]using[/dim] [bold]{label}[/bold] [dim]to generate load_data + evaluate"
@@ -335,21 +335,21 @@ async def _do_freeze(lab: LabEnvironment, d: Domain, *, unsafe_skip_verify: bool
         console.print("[red]✗ task cannot be frozen — verification gate failed:[/red]")
         for err in exc.errors:
             console.print(f"  · {err}")
-        program_path = resolve_program_path(d, base_dir=Path(lab.settings.storage.base_dir))
+        setup_path = resolve_setup_path(d, base_dir=Path(lab.settings.storage.base_dir))
         console.print(
             "\n  [dim]how to read these errors:[/dim]\n"
             "    [cyan]·[/cyan] [dim]if a message says[/dim] "
             "[yellow]<file>.py:<line>[/yellow][dim], the bug is in the AI-generated "
-            "tool — edit PROGRAM.md (or pass --hint) to steer it differently[/dim]\n"
+            "tool — edit SETUP.md (or pass --hint) to steer it differently[/dim]\n"
             "    [cyan]·[/cyan] [dim]messages mentioning[/dim] "
             "[yellow]0 rows / dataset window / cache[/yellow][dim] are about "
-            "your data setup — fix the dataset spec in PROGRAM.md[/dim]\n"
+            "your data setup — fix the dataset spec in SETUP.md[/dim]\n"
             "    [cyan]·[/cyan] [dim]messages like[/dim] "
             "[yellow]verifier cannot JSON-encode / no result marker[/yellow]"
             "[dim] are framework bugs — please open a dojo issue[/dim]"
         )
         console.print(
-            f"\n  fix: edit [cyan]{program_path}[/cyan] (or pass --hint), then re-run "
+            f"\n  fix: edit [cyan]{setup_path}[/cyan] (or pass --hint), then re-run "
             "[bold]dojo task setup[/bold]."
         )
         raise typer.Exit(code=EXIT_GATE) from exc

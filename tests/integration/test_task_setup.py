@@ -167,6 +167,6 @@ def test_dojo_task_setup_surfaces_verification_failure(
     result = runner.invoke(app, ["task", "setup"])
     assert result.exit_code == 3, result.output
     assert "verification gate failed" in result.output
-    # Helpful next step points at PROGRAM.md, not the old "run dojo task generate"
-    assert "PROGRAM.md" in result.output
+    # Helpful next step points at SETUP.md, not the old "run dojo task generate"
+    assert "SETUP.md" in result.output
     assert "dojo task setup" in result.output

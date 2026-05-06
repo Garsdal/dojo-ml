@@ -249,7 +249,7 @@ def _format_exit_error(tool_name: str, exit_code: int, stderr: str, stdout: str)
     if exit_code in (-9, 137):
         hint = (
             " — likely the OS killed it for using too much memory (SIGKILL). "
-            "Try shrinking the dataset window in PROGRAM.md, or pre-build any "
+            "Try shrinking the dataset window in SETUP.md, or pre-build any "
             "expensive cache outside `dojo task setup` (run the file once with "
             "`uv run python <sources_dir>/load_data.py`)."
         )
@@ -290,7 +290,7 @@ def _check_type(value: Any, spec: str) -> str | None:
             return (
                 "expected a non-empty list, got []. "
                 "Your data loader returned 0 rows — likely the dataset window "
-                "in PROGRAM.md produced no matching rows."
+                "in SETUP.md produced no matching rows."
             )
         if "list of list" in s and not isinstance(value[0], list):
             return "expected list of lists"

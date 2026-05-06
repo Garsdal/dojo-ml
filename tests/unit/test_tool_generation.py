@@ -128,7 +128,7 @@ def test_parse_multiple_tools():
     assert tools[1]["name"] == "eval"
 
 
-# --- Phase 3.5: registry-aware prompt + PROGRAM.md threading -----------------
+# --- Phase 3.5: registry-aware prompt + SETUP.md threading -----------------
 
 
 def test_build_task_generation_prompt_uses_regression_template():
@@ -144,22 +144,22 @@ def test_build_task_generation_prompt_uses_regression_template():
     assert "mae" in prompt
 
 
-def test_build_task_generation_prompt_threads_program_md():
-    """Phase 3.5: PROGRAM.md content is fenced into the prompt as the user's spec."""
+def test_build_task_generation_prompt_threads_setup_md():
+    """Phase 3.5: SETUP.md content is fenced into the prompt as the user's spec."""
     domain = Domain(name="housing", description="d")
     task = Task(type=TaskType.REGRESSION, config={})
-    program = "## Dataset\nUse sklearn.datasets.fetch_california_housing(return_X_y=True).\n"
-    prompt = build_task_generation_prompt(domain, task, program_md=program)
-    assert "PROGRAM.md" in prompt
+    setup = "## Dataset\nUse sklearn.datasets.fetch_california_housing(return_X_y=True).\n"
+    prompt = build_task_generation_prompt(domain, task, setup_md=setup)
+    assert "SETUP.md" in prompt
     assert "fetch_california_housing" in prompt
-    # Empty config fields should signal "use PROGRAM.md" rather than literal "(unset)"
-    assert "use PROGRAM.md" in prompt
+    # Empty config fields should signal "use SETUP.md" rather than literal "(unset)"
+    assert "use SETUP.md" in prompt
 
 
-def test_build_task_generation_prompt_handles_empty_program_md():
-    """No PROGRAM.md means no fenced spec — but the prompt still works."""
+def test_build_task_generation_prompt_handles_empty_setup_md():
+    """No SETUP.md means no fenced spec — but the prompt still works."""
     domain = Domain(name="d", description="d")
     task = Task(type=TaskType.REGRESSION, config={"data_path": "/tmp/x.csv"})
-    prompt = build_task_generation_prompt(domain, task)  # program_md default ""
+    prompt = build_task_generation_prompt(domain, task)  # setup_md default ""
     assert "empty" in prompt
     assert "/tmp/x.csv" in prompt

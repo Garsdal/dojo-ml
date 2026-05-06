@@ -25,7 +25,7 @@ def build_task_generation_prompt(
     task: Task,
     hint: str = "",
     *,
-    program_md: str = "",
+    setup_md: str = "",
 ) -> str:
     """Registry-aware prompt builder.
 
@@ -38,10 +38,9 @@ def build_task_generation_prompt(
         domain: The domain the task belongs to (provides name + description).
         task: The task — `task.config` carries optional structured hints.
         hint: Extra user-supplied hint (typically from `dojo task generate --hint`).
-        program_md: The contents of PROGRAM.md, treated as the user's natural-
-            language spec. The AI is told to prefer this over `task.config`
-            fields when they conflict — most users will leave config fields
-            empty and describe the dataset in PROGRAM.md instead.
+        setup_md: The contents of SETUP.md, treated as the user's natural-
+            language data + evaluation spec. Strict source of truth — the AI
+            generator does not see PROGRAM.md.
     """
     spec = TASK_TYPE_REGISTRY.get(task.type)
     if spec is None or task.type != TaskType.REGRESSION:
@@ -51,29 +50,25 @@ def build_task_generation_prompt(
     return spec.generation_prompt_template.format(
         domain_name=domain.name,
         domain_description=domain.description or "(no description)",
-        program_md_section=_format_program_md(program_md),
-        data_path=cfg.get("data_path") or "(not set — use PROGRAM.md)",
-        target_column=cfg.get("target_column") or "(not set — use PROGRAM.md)",
+        setup_md_section=_format_setup_md(setup_md),
+        data_path=cfg.get("data_path") or "(not set — use SETUP.md)",
+        target_column=cfg.get("target_column") or "(not set — use SETUP.md)",
         test_split_ratio=cfg.get("test_split_ratio", 0.2),
-        feature_columns=cfg.get("feature_columns") or "(not set — use PROGRAM.md)",
+        feature_columns=cfg.get("feature_columns") or "(not set — use SETUP.md)",
         hint_section=f"Additional hints from the user:\n{hint}\n" if hint else "",
         train_output_description=spec.train_output_description
         or "the task-specific output of train()",
     )
 
 
-def _format_program_md(content: str) -> str:
-    """Render the PROGRAM.md block of the generation prompt.
-
-    Empty content gets a short stub so the model knows the user didn't write
-    anything special; non-empty content gets fenced off so the model sees it
-    as data, not instructions.
-    """
+def _format_setup_md(content: str) -> str:
+    """Render the SETUP.md block of the generation prompt."""
     body = content.strip()
     if not body:
-        return "## PROGRAM.md\n(empty — fall back entirely to the structured hints below)\n"
+        return "## SETUP.md\n(empty — fall back entirely to the structured hints below)\n"
     return (
-        f"## PROGRAM.md (the user's spec — this is the source of truth)\n```markdown\n{body}\n```\n"
+        f"## SETUP.md (the user's data + evaluation spec — this is the source of truth)\n"
+        f"```markdown\n{body}\n```\n"
     )
 
 
