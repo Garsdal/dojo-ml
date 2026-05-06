@@ -74,12 +74,16 @@ def test_init_non_interactive_creates_domain_task_program(initialized_dir: Path)
     assert not (initialized_dir / "ws" / "PROGRAM.md").exists()
     body = program[0].read_text()
     assert "housing" in body
-    assert "regression" in body
-    # New template carries the natural-language sections
-    assert "## Dataset" in body
+    # Steering-only template: dataset/evaluate/contract/task-type live in SETUP.md
+    assert "## Goal" in body
     assert "## Target" in body
     assert "## Success" in body
-    assert "## Evaluate" in body
+    assert "## Notes" in body
+    assert "SETUP.md" in body
+    assert "## Dataset" not in body
+    assert "## Evaluate" not in body
+    assert "## Contract" not in body
+    assert "## Task type" not in body
 
 
 def test_init_works_without_data_path_or_target_column(cli_dir: Path):

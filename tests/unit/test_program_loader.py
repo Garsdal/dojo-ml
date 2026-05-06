@@ -69,7 +69,7 @@ def test_write_creates_parent_dirs(tmp_path: Path):
     assert written.read_text() == "hello"
 
 
-def test_default_template_contains_name_and_task(tmp_path: Path):
+def test_default_template_is_steering_only(tmp_path: Path):
     from dojo.core.task import Task, TaskType
 
     domain = Domain(
@@ -78,6 +78,16 @@ def test_default_template_contains_name_and_task(tmp_path: Path):
         task=Task(type=TaskType.REGRESSION),
     )
     out = default_program_template(domain)
+    # Steering sections present
+    assert "## Goal" in out
+    assert "## Target" in out
+    assert "## Success" in out
+    assert "## Notes" in out
     assert "california housing" in out
     assert "predict median house value" in out
-    assert "regression" in out
+    # Tool-generation sections moved to SETUP.md and MUST NOT appear here
+    assert "## Dataset" not in out
+    assert "## Evaluate" not in out
+    assert "## Contract" not in out
+    # Mention SETUP.md so a reader knows where data/eval live
+    assert "SETUP.md" in out
