@@ -183,6 +183,23 @@ async def test_workspace_setup_script_roundtrip(tmp_path: Path):
     assert loaded.workspace.setup_script == "bash setup.sh"
 
 
+async def test_domain_program_and_setup_paths_roundtrip(tmp_path: Path):
+    """program_path and setup_path persist through save() + load()."""
+    store = LocalDomainStore(tmp_path / "domains")
+
+    domain = Domain(
+        name="PathsTest",
+        program_path="/some/where/PROGRAM.md",
+        setup_path="/some/where/SETUP.md",
+    )
+    await store.save(domain)
+
+    loaded = await store.load(domain.id)
+    assert loaded is not None
+    assert loaded.program_path == "/some/where/PROGRAM.md"
+    assert loaded.setup_path == "/some/where/SETUP.md"
+
+
 async def test_domain_with_workspace_update(tmp_path: Path):
     """Updating a domain with a workspace persists the updated workspace."""
     store = LocalDomainStore(tmp_path / "domains")

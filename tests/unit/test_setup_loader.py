@@ -25,6 +25,21 @@ def test_resolve_falls_back_to_domain_local(tmp_path: Path):
     assert resolve_setup_path(domain, base_dir=tmp_path) == expected
 
 
+def test_resolve_ignores_workspace_path(tmp_path: Path):
+    """Workspace.path doesn't steer SETUP.md location — it always lives under
+    the dojo storage base so we don't pollute the user's repo."""
+    from dojo.core.domain import Workspace, WorkspaceSource
+
+    ws_dir = tmp_path / "ws"
+    ws_dir.mkdir()
+    domain = Domain(
+        name="d",
+        workspace=Workspace(source=WorkspaceSource.LOCAL, path=str(ws_dir)),
+    )
+    expected = tmp_path / "domains" / domain.id / "SETUP.md"
+    assert resolve_setup_path(domain, base_dir=tmp_path) == expected
+
+
 def test_load_returns_file_content(tmp_path: Path):
     setup = tmp_path / "SETUP.md"
     setup.write_text("## Dataset\nhousing data\n")
@@ -51,7 +66,7 @@ def test_write_creates_parent_dirs(tmp_path: Path):
     assert written.read_text() == "## Dataset\n…\n"
 
 
-def test_default_template_has_dataset_and_evaluate_sections(tmp_path: Path):
+def test_default_template_has_dataset_and_evaluate_sections():
     domain = Domain(name="california housing", description="predict prices")
     out = default_setup_template(domain)
     assert "california housing" in out

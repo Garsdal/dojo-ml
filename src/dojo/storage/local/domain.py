@@ -150,4 +150,5 @@ class LocalDomainStore(DomainStore):
             workspace=workspace,
             task=task,
             program_path=data.get("program_path"),
+            setup_path=data.get("setup_path"),
         )
