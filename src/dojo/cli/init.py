@@ -5,13 +5,16 @@ Steps:
   1. Bootstrap config (.dojo/config.yaml)
   2. Create the Domain + workspace
   3. Create the Task (regression-only today)
-  4. Scaffold PROGRAM.md (the user's spec)
+  4. Scaffold PROGRAM.md (steering prompt, agent reads at run-time)
+  4b. Scaffold SETUP.md  (data + eval spec, read once by `dojo task setup`)
   5. Set current_domain_id
   6. Print next steps
 
-Tool generation is intentionally NOT part of init — the user edits PROGRAM.md
-to describe the dataset/goal in natural language, then runs `dojo task setup`
-to generate and verify tools against that description.
+Tool generation is intentionally NOT part of init — the user edits SETUP.md
+to describe the dataset and evaluation, then runs `dojo task setup` to
+generate and verify tools against that description. PROGRAM.md is steering-
+only (research goal/target/success/notes) and is read by the agent at
+run-time.
 """
 
 from __future__ import annotations

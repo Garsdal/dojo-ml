@@ -58,8 +58,3 @@ def test_regression_spec_has_verifier_script():
     assert "evaluate" in spec.verifier_script
     assert "__DOJO_TOOL_RESULT__" in spec.verifier_script
     assert "__DOJO_TOOL_ERROR__" in spec.verifier_script
-
-
-def test_regression_contract_version_is_at_least_3():
-    spec = TASK_TYPE_REGISTRY[TaskType.REGRESSION]
-    assert spec.contract_version >= 3

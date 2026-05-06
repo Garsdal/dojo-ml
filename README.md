@@ -63,17 +63,20 @@ The CLI is a peer of the HTTP API, not a thin wrapper around it. The whole happy
 ```bash
 mkdir housing && cd housing
 
-# 1. Scaffold the domain (creates .dojo/, the regression Task, and PROGRAM.md)
+# 1. Scaffold the domain (creates .dojo/, the regression Task, PROGRAM.md, SETUP.md)
 dojo init --name housing --task-type regression --non-interactive
 
-# 2. Describe the dataset, target, and what success looks like
+# 2. Describe the research goal, target, success
 $EDITOR PROGRAM.md
 
-# 3. AI generates load_data + evaluate from PROGRAM.md, verifies them against
+# 3. Describe the dataset and evaluation (read once by `dojo task setup`)
+$EDITOR SETUP.md
+
+# 4. AI generates load_data + evaluate from SETUP.md, verifies them against
 #    the regression contract, and freezes the task. Re-run after edits.
 dojo task setup
 
-# 4. Run the agent — events stream live to your terminal
+# 5. Run the agent — events stream live to your terminal
 dojo run --max-turns 30
 ```
 
@@ -87,7 +90,7 @@ dojo run --max-turns 30
 > ```
 >
 > Opus is slower (~30–60s vs 15–30s) but noticeably better at translating a
-> messy `PROGRAM.md` into correct `load_data` / `evaluate` modules. Set it
+> messy `SETUP.md` into correct `load_data` / `evaluate` modules. Set it
 > permanently in `.dojo/config.yaml` under `agent.tool_generation_model` if
 > you want it as the default.
 
@@ -97,11 +100,6 @@ A reasonable starter `PROGRAM.md` for California housing:
 ## Goal
 Predict California median house value (regression). Minimise RMSE on a 20% held-out test split.
 
-## Dataset
-Use `sklearn.datasets.fetch_california_housing(return_X_y=True)`.
-Features and target both come back as numpy arrays — no column names needed.
-https://scikit-learn.org/stable/modules/generated/sklearn.datasets.fetch_california_housing.html
-
 ## Target
 Median house value (in $100,000s) for census blocks in California.
 
@@ -109,10 +107,23 @@ Median house value (in $100,000s) for census blocks in California.
 Beat a linear baseline. Try at least one tree-based model. Avoid overfitting.
 ```
 
+A reasonable starter `SETUP.md`:
+
+```markdown
+## Dataset
+Use `sklearn.datasets.fetch_california_housing(return_X_y=True)`.
+Features and target both come back as numpy arrays — no column names needed.
+https://scikit-learn.org/stable/modules/generated/sklearn.datasets.fetch_california_housing.html
+
+## Evaluate
+Use sklearn's mean_squared_error / r2_score / mean_absolute_error against y_test.
+Save a residuals scatter plot to artifacts_dir/residuals.png.
+```
+
 What happens under the hood:
 
-- **`dojo init`** writes `.dojo/config.yaml`, creates the domain + regression task with `expected_metrics = [rmse, r2, mae]`, scaffolds `PROGRAM.md`, and sets `current_domain_id`.
-- **`dojo task setup`** reads `PROGRAM.md`, asks the AI to generate `load_data` + `evaluate`, runs each tool in a sandbox against its `ToolContract`, and freezes the task. Verification failures tell you which tool failed and why — fix `PROGRAM.md` (or the tool code) and re-run.
+- **`dojo init`** writes `.dojo/config.yaml`, creates the domain + regression task with `expected_metrics = [rmse, r2, mae]`, scaffolds `PROGRAM.md` and `SETUP.md`, and sets `current_domain_id`.
+- **`dojo task setup`** reads `SETUP.md`, asks the AI to generate `load_data` + `evaluate`, runs each tool in a sandbox against its `ToolContract`, and freezes the task. Verification failures tell you which tool failed and why — fix `SETUP.md` (or the tool code) and re-run.
 - **`dojo run`** starts the agent in-process. The agent writes training code; `load_data` and `evaluate` stay frozen. The metric dict from `evaluate` is the only source of truth — `complete_experiment` rejects metric keys outside the contract, so the agent can't smuggle in custom numbers.
 
 Useful neighbours:
@@ -151,6 +162,26 @@ dojo runs show               # last run's events + total cost
 (e.g. `rmse` minimised), so the leader sits on top regardless of run order.
 The agent's training code is preserved per-experiment in the workspace as
 `__dojo_train_<experiment_id>.py` — `cat` it to reproduce a run by hand.
+
+## Artifacts
+
+Each experiment gets a fresh `.dojo/domains/{id}/runs/{eid}/artifacts/` directory. The runner passes its path as `artifacts_dir` to **both** `train()` and `evaluate()`.
+
+- **`evaluate(..., artifacts_dir)` writes durable per-run diagnostics** — residual plots, calibration curves, error breakdowns. These are produced on every run and are part of the user-defined evaluation contract in `SETUP.md`.
+- **`train(..., artifacts_dir)` writes opportunistic artifacts** — model checkpoints (`joblib.dump(model, artifacts_dir / "model.pkl")`), training curves, feature importances. The agent decides when an artifact is worth keeping; not every run will write here.
+
+Everything written to `artifacts_dir` is:
+
+1. Copied into the durable Dojo archive at `.dojo/artifacts/experiments/{eid}/...`.
+2. Forwarded to the active tracking backend (`MlflowTracker.log_artifact` uploads to MLflow; `FileTracker` records a reference; `NoopTracker` drops it).
+
+### Migrating from v0.0.10
+
+If your domain has a v0.0.10 `PROGRAM.md` with mixed Goal/Dataset/Evaluate content:
+
+1. Create `SETUP.md` next to `PROGRAM.md` with the existing `## Dataset` and `## Evaluate` sections.
+2. Trim `PROGRAM.md` to `## Goal`, `## Target`, `## Success`, `## Notes`.
+3. Run `dojo task setup` again — the regression contract is now v4 (train receives `artifacts_dir`), so any frozen task needs re-verification anyway.
 
 ## Running the server (optional)
 
@@ -222,7 +253,7 @@ tests/          # unit, integration, e2e
 |--------|------|-------------|
 | `POST` | `/domains` | Create a research domain |
 | `POST` | `/domains/{id}/task` | Attach a Task (regression today) |
-| `POST` | `/domains/{id}/tools/generate` | AI-generate `load_data` / `evaluate` from PROGRAM.md, verify against contract |
+| `POST` | `/domains/{id}/tools/generate` | AI-generate `load_data` / `evaluate` from SETUP.md, verify against contract |
 | `POST` | `/domains/{id}/task/freeze` | Freeze the task — gated on every required tool's verification |
 | `POST` | `/domains/{id}/workspace/setup` | One-time workspace prep (venv + deps) |
 | `POST` | `/agent/run` | Start an agent run on a domain (requires a frozen task) |
