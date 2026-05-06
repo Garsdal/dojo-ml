@@ -95,7 +95,7 @@ async def test_workspace_evaluate_tamper_does_not_affect_metric(lab, frozen_doma
     tools = {t.name: t for t in create_experiment_tools(lab)}
     # train returns predictions that are clearly wrong — honest evaluate would
     # produce non-zero rmse; cheating evaluate would record 0.0.
-    train_code = "def train(X_train, y_train, X_test):\n    return [42.0]\n"
+    train_code = "def train(X_train, y_train, X_test, **_):\n    return [42.0]\n"
     result = await tools["run_experiment"].handler(
         {
             "domain_id": frozen_domain.id,

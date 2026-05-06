@@ -55,7 +55,7 @@ class StubAgentBackend(AgentBackend):
 
         1. ``search_knowledge`` — observability of the prior-knowledge step.
         2. ``run_experiment`` — best-effort. Trivial
-           ``def train(X_train, y_train, X_test): return [0.0]*len(X_test)``.
+           ``def train(X_train, y_train, X_test, **_): return [0.0]*len(X_test)``.
            If the domain has no frozen task / no workspace, the call returns
            an error result and the stub keeps going so non-tracking tests
            still see the full event sequence.
@@ -100,7 +100,7 @@ class StubAgentBackend(AgentBackend):
         run_params = {
             "domain_id": domain_id,
             "hypothesis": f"Stub hypothesis for: {prompt}",
-            "train_code": "def train(X_train, y_train, X_test):\n    return [0.0]\n",
+            "train_code": "def train(X_train, y_train, X_test, **_):\n    return [0.0]\n",
         }
         yield AgentEvent(
             event_type="tool_call",

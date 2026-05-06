@@ -25,7 +25,7 @@ def test_regression_evaluate_contract_includes_train_test_splits():
 def test_regression_runner_callsite_passes_data_to_train_and_evaluate():
     spec = TASK_TYPE_REGISTRY[TaskType.REGRESSION]
     callsite = spec.runner_callsite
-    assert "train(X_train, y_train, X_test)" in callsite
+    assert "train(X_train, y_train, X_test, artifacts_dir=" in callsite
     assert "X_train=X_train" in callsite
     assert "y_test=y_test" in callsite
     assert "artifacts_dir=" in callsite

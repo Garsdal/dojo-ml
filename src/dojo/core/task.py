@@ -155,16 +155,20 @@ Module 2 — evaluate.py
 - Computes: rmse (float), r2 (float), mae (float) against ``y_test``.
 - Returns a dict with exactly those three keys: {{"rmse": ..., "r2": ..., "mae": ...}}.
 - Must NOT print to stdout — return only.
-- May write evaluation plots or diagnostics into ``artifacts_dir`` (a
-  real, writable directory — write files there directly). This is optional;
-  ignore the parameter if you have nothing to save.
+- Should write a default diagnostic into ``artifacts_dir`` for every run —
+  e.g. a residual scatter plot via matplotlib (3 lines: figure, scatter,
+  savefig). This is the durable per-run record consumers will look at.
+  Skip only if SETUP.md explicitly says nothing should be saved.
 
 ## Train (agent's per-experiment code, written separately)
 The framework expects the agent's training code to define:
-  ``def train(X_train, y_train, X_test) -> y_pred``
+  ``def train(X_train, y_train, X_test, *, artifacts_dir) -> y_pred``
 where ``y_pred`` is {train_output_description}. The framework calls
 ``train`` with the splits from ``load_data()`` — do not call
-``load_data`` from inside ``train`` either.
+``load_data`` from inside ``train`` either. The same ``artifacts_dir``
+is shared with ``evaluate`` (Module 2). Anything saved there from
+``train()`` is archived for the experiment, but train artifacts are
+opportunistic — most experiments will be fine ignoring the parameter.
 
 Output format (respond with ONLY this JSON, no markdown):
 [
@@ -328,7 +332,8 @@ TASK_TYPE_REGISTRY: ClassVar[dict[TaskType, TaskTypeSpec]] = {
             },
         },
         runner_callsite=(
-            "y_pred = train(X_train, y_train, X_test)\n"
+            "y_pred = train(X_train, y_train, X_test, "
+            'artifacts_dir=Path(os.environ["DOJO_ARTIFACTS_DIR"]))\n'
             "    metrics = evaluate("
             "y_pred, "
             "X_train=X_train, "
@@ -338,7 +343,7 @@ TASK_TYPE_REGISTRY: ClassVar[dict[TaskType, TaskTypeSpec]] = {
             'artifacts_dir=Path(os.environ["DOJO_ARTIFACTS_DIR"]))'
         ),
         verifier_script=_REGRESSION_VERIFIER,
-        contract_version=3,
+        contract_version=4,
         train_output_description="a flat list of float predictions for the test set, in the same order as X_test from load_data()",
         runner_prelude=(
             "from load_data import load_data\n    X_train, X_test, y_train, y_test = load_data()"

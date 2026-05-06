@@ -36,7 +36,7 @@ _TRAIN = textwrap.dedent(
     import os
     from pathlib import Path
 
-    def train(X_train, y_train, X_test):
+    def train(X_train, y_train, X_test, **_):
         artifacts = Path(os.environ["DOJO_ARTIFACTS_DIR"])
         (artifacts / "evaluation_summary.html").write_text("<html>ok</html>")
         return [4.0, 5.0]

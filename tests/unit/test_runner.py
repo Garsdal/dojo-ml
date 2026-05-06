@@ -132,3 +132,26 @@ def test_render_runner_omits_load_data_when_no_prelude():
     )
     assert "from load_data import load_data" not in code
     assert "X_train, X_test, y_train, y_test" not in code
+
+
+def test_runner_passes_artifacts_dir_to_train():
+    """v4 regression contract: train() receives artifacts_dir as kwarg."""
+    from dojo.core.task import TASK_TYPE_REGISTRY, TaskType
+
+    spec = TASK_TYPE_REGISTRY[TaskType.REGRESSION]
+    code = render_runner(
+        train_module="__dojo_train",
+        canonical_dir="/c",
+        workspace_dir="/w",
+        train_dir="/t",
+        callsite=spec.runner_callsite,
+        prelude=spec.runner_prelude,
+    )
+    assert "train(X_train, y_train, X_test, artifacts_dir=" in code
+    assert "evaluate(" in code and "artifacts_dir=" in code
+
+
+def test_regression_contract_version_is_4():
+    from dojo.core.task import TASK_TYPE_REGISTRY, TaskType
+
+    assert TASK_TYPE_REGISTRY[TaskType.REGRESSION].contract_version == 4
