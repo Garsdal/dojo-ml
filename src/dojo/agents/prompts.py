@@ -28,7 +28,7 @@ experiment is a single ``run_experiment`` MCP call: you submit Python source
 defining
 
 ```python
-def train(X_train, y_train, X_test) -> y_pred
+def train(X_train, y_train, X_test, *, artifacts_dir) -> y_pred
 ```
 
 The framework loads the data once, calls your ``train()`` with the splits
@@ -48,7 +48,7 @@ so experiments and knowledge are linked to this domain.
 ### Per-experiment driver
 - **run_experiment** — Submit ``train_code`` (Python module string) along with
   a hypothesis. The framework creates the experiment, runs your
-  ``def train(X_train, y_train, X_test)`` against the frozen ``load_data`` +
+  ``def train(X_train, y_train, X_test, *, artifacts_dir)`` against the frozen ``load_data`` +
   ``evaluate``, parses metrics, and records the result. Returns
   ``{{experiment_id, status, metrics, stdout, stderr, exit_code, run_number}}``.
 
@@ -73,7 +73,7 @@ so experiments and knowledge are linked to this domain.
    raw experiments at all.
 2. Plan one hypothesis worth testing.
 3. ``run_experiment(domain_id, hypothesis, train_code)`` — your ``train_code``
-   defines ``def train(X_train, y_train, X_test)`` returning the task-specific
+   defines ``def train(X_train, y_train, X_test, *, artifacts_dir)`` returning the task-specific
    output (regression: a flat list of float predictions for X_test, in the
    same order).
 4. After each experiment, ask: *would a future run of this domain benefit
@@ -94,9 +94,9 @@ the workspace before running anything is the single most common way to burn
 through it. Defaults that keep you efficient:
 
 - **Don't read ``load_data.py`` or ``evaluate.py``.** They are frozen black
-  boxes from your perspective. Their behaviour is fully described by the
-  task contract above and steered by the `## Dataset` / `## Evaluate` sections
-  of PROGRAM.md. Just call them in your ``train()``.
+  boxes from your perspective. Their behaviour was fixed at task-setup time
+  from the user's data + evaluation spec (a separate file you don't see).
+  Trust the contract above and just call them in your ``train()``.
 - **Trust PROGRAM.md.** It is the user's spec. If it names a model class
   (e.g. "use ``PriceModel`` from ``mypkg.models``"), import it directly and
   run a baseline experiment as your first turn. Don't hunt around the
@@ -117,8 +117,10 @@ through it. Defaults that keep you efficient:
 from sklearn.linear_model import LinearRegression
 
 
-def train(X_train, y_train, X_test):
+def train(X_train, y_train, X_test, *, artifacts_dir):
     model = LinearRegression().fit(X_train, y_train)
+    # optional: persist the trained model for later inspection
+    # import joblib; joblib.dump(model, artifacts_dir / "model.pkl")
     return model.predict(X_test).tolist()
 ```
 
@@ -209,11 +211,11 @@ def _build_task_section(task: Task | None) -> str:
         "\n### Contract — exact signatures\n"
         "```python\n"
         "# you write this:\n"
-        "def train(X_train, y_train, X_test) -> y_pred: ...\n"
+        "def train(X_train, y_train, X_test, *, artifacts_dir) -> y_pred: ...\n"
         "\n"
         "# the framework calls (don't re-implement these):\n"
         "X_train, X_test, y_train, y_test = load_data()\n"
-        "y_pred = train(X_train, y_train, X_test)\n"
+        "y_pred = train(X_train, y_train, X_test, artifacts_dir=artifacts_dir)\n"
         "metrics = evaluate(\n"
         "    y_pred,\n"
         "    X_train=X_train, X_test=X_test,\n"
@@ -226,6 +228,25 @@ def _build_task_section(task: Task | None) -> str:
         "again wastes time and may even fail in some workspaces.\n"
         "- ``load_data`` and ``evaluate`` are loaded from a canonical, frozen "
         "path. Don't try to override or shadow them."
+    )
+
+    lines.append(
+        "\n### Artifacts\n"
+        "Both ``train()`` and ``evaluate()`` receive ``artifacts_dir: Path`` — "
+        "a writable per-experiment directory. Anything written there is "
+        "archived and forwarded to the active tracking backend (e.g. MLflow) "
+        "automatically.\n"
+        "\n"
+        "- **Train artifacts are opportunistic.** Use them when a saved file "
+        "would be worth comparing across experiments — a model checkpoint "
+        "(``joblib.dump(model, artifacts_dir / 'model.pkl')``), a learning "
+        "curve plot, feature importances. Most runs won't need to write "
+        "anything; that's fine.\n"
+        "- **Evaluate artifacts are durable.** ``evaluate()`` writes diagnostic "
+        "plots (residuals, calibration) on every run by design — that output "
+        "is the per-run record reviewers will look at.\n"
+        "- **Don't try to read prior experiments' artifacts from inside "
+        "``train()``** — each run gets its own fresh ``artifacts_dir``."
     )
 
     cfg_lines = []

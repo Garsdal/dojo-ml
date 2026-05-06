@@ -62,7 +62,9 @@ class TaskTypeSpec:
     runner_callsite: str
     verifier_script: str
     contract_version: int
-    train_output_description: str = ""  # what `def train(X_train, y_train, X_test)` must return
+    train_output_description: str = (
+        ""  # what `def train(X_train, y_train, X_test, *, artifacts_dir)` must return
+    )
     runner_prelude: str = ""  # Python lines rendered into the runner BEFORE the callsite
 
 
