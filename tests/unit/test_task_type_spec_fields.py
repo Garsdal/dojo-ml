@@ -43,7 +43,7 @@ def test_regression_prompt_specifies_new_evaluate_signature():
 def test_regression_prompt_describes_train_signature():
     spec = TASK_TYPE_REGISTRY[TaskType.REGRESSION]
     prompt = spec.generation_prompt_template
-    assert "train(X_train, y_train, X_test)" in prompt
+    assert "train(X_train, y_train, X_test, *, artifacts_dir)" in prompt
 
 
 def test_regression_spec_runner_prelude_imports_load_data():

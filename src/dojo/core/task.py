@@ -133,8 +133,9 @@ Domain: {domain_name}
 ## Output: exactly two Python modules
 
 The framework imports these modules and calls the named functions. The agent's
-`def train(X_train, y_train, X_test)` (written separately at run-time) runs
-in the same Python process as `evaluate`, so `y_pred` never leaves memory.
+`def train(X_train, y_train, X_test, *, artifacts_dir)` (written separately
+at run-time) runs in the same Python process as `evaluate`, so `y_pred` never
+leaves memory.
 
 Module 1 — load_data.py
 - Defines a top-level function: `def load_data():`
