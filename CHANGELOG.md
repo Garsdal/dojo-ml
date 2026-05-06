@@ -13,6 +13,16 @@ for the release workflow.
 
 ## [Unreleased]
 
+## [v0.0.12] - 2026-05-06
+
+### Agent prompts
+
+(none in this release)
+
+### Added
+
+- **`dojo experiments ls --sort {metric,created}`** ([src/dojo/cli/experiments.py](src/dojo/cli/experiments.py)) — new flag toggles between the existing primary-metric ranking (default, completed experiments only) and a creation-time view (`--sort created`, all experiments, newest first). The created view adds a per-row timestamp column and prints "sorted by created_at (newest first)" instead of the metric/direction header. Empty-state messaging branches on the sort: `created` says "no experiments yet"; `metric` keeps the existing "no completed experiments yet (N failed)" line. The rank header column is renamed `rank` → `#` to make sense in either view.
+
 ## [v0.0.11] - 2026-05-06
 
 ### Agent prompts

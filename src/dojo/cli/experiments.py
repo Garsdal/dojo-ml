@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from enum import StrEnum
 from pathlib import Path
 
 import typer
@@ -17,6 +18,11 @@ from dojo.core.task import Direction, Task
 
 console = Console()
 app = typer.Typer(help="List, rank, and inspect experiments for a domain")
+
+
+class SortBy(StrEnum):
+    METRIC = "metric"
+    CREATED = "created"
 
 
 def _primary_metric_value(exp: Experiment, key: str) -> float | None:
@@ -61,8 +67,13 @@ def ls(
     ),
     limit: int = typer.Option(20, "--limit", help="Max rows to show"),
     json_output: bool = typer.Option(False, "--json", help="Emit raw JSON"),
+    sort_by: SortBy = typer.Option(  # noqa: B008
+        SortBy.METRIC,
+        "--sort",
+        help="metric: completed only, ranked by primary metric. created: all experiments, newest first.",
+    ),
 ) -> None:
-    """List experiments ranked by the task's primary metric (best first)."""
+    """List experiments, ranked by the task's primary metric or by creation time."""
 
     async def _run() -> None:
         lab, settings = build_cli_lab()
@@ -74,36 +85,53 @@ def ls(
             raise typer.Exit(code=1) from e
 
         all_exps = await lab.experiment_store.list(domain_id=d.id)
-        ranked = _rank(all_exps, d.task)
-        ranked = ranked[:limit]
+        if sort_by == SortBy.CREATED:
+            experiments = sorted(all_exps, key=lambda e: e.created_at, reverse=True)
+        else:
+            experiments = _rank(all_exps, d.task)
+        experiments = experiments[:limit]
 
         if json_output:
-            console.print_json(data=[_experiment_to_dict(e, d.task) for e in ranked])
+            console.print_json(data=[_experiment_to_dict(e, d.task) for e in experiments])
             return
 
-        if not ranked:
-            failed = sum(1 for e in all_exps if e.state == ExperimentState.FAILED)
-            msg = "[dim]no completed experiments yet[/dim]"
-            if failed:
-                msg += f" [dim]({failed} failed)[/dim]"
-            console.print(msg)
+        if not experiments:
+            if sort_by == SortBy.CREATED:
+                console.print("[dim]no experiments yet[/dim]")
+            else:
+                failed = sum(1 for e in all_exps if e.state == ExperimentState.FAILED)
+                msg = "[dim]no completed experiments yet[/dim]"
+                if failed:
+                    msg += f" [dim]({failed} failed)[/dim]"
+                console.print(msg)
             return
 
         metric_key = d.task.primary_metric if d.task else "—"
-        direction = d.task.direction.value if d.task else "—"
-        console.print(f"[dim]ranked by[/dim] [bold]{metric_key}[/bold] [dim]({direction})[/dim]")
+        if sort_by == SortBy.CREATED:
+            console.print("[dim]sorted by[/dim] [bold]created_at[/bold] [dim](newest first)[/dim]")
+        else:
+            direction = d.task.direction.value if d.task else "—"
+            console.print(
+                f"[dim]ranked by[/dim] [bold]{metric_key}[/bold] [dim]({direction})[/dim]"
+            )
 
         table = Table(show_header=True, header_style="bold")
-        table.add_column("rank", justify="right")
+        table.add_column("#", justify="right")
         table.add_column("id", style="cyan")
+        if sort_by == SortBy.CREATED:
+            table.add_column("created", style="dim")
         table.add_column(metric_key, justify="right")
         table.add_column("state")
         table.add_column("hypothesis")
-        for i, exp in enumerate(ranked, start=1):
+        for i, exp in enumerate(experiments, start=1):
             metric = _primary_metric_value(exp, metric_key) if d.task else None
             metric_str = f"{metric:.4f}" if metric is not None else "—"
             hypothesis = exp.hypothesis.description if exp.hypothesis else "—"
-            table.add_row(str(i), exp.id, metric_str, exp.state.value, hypothesis[:60])
+            row = [str(i), exp.id]
+            if sort_by == SortBy.CREATED:
+                row.append(exp.created_at.strftime("%Y-%m-%d %H:%M:%S"))
+            row.extend([metric_str, exp.state.value, hypothesis[:60]])
+            table.add_row(*row)
         console.print(table)
 
     asyncio.run(_run())
