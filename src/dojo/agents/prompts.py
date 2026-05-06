@@ -220,6 +220,7 @@ def _build_task_section(task: Task | None) -> str:
         "    y_pred,\n"
         "    X_train=X_train, X_test=X_test,\n"
         "    y_train=y_train, y_test=y_test,\n"
+        "    artifacts_dir=artifacts_dir,\n"
         ")\n"
         "```\n"
         f"- **``train()`` must return**: {train_output or 'the task-specific output'}.\n"

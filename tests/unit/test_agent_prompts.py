@@ -25,6 +25,8 @@ def test_system_prompt_documents_artifacts_dir_for_train():
     # Artifacts section explains the policy
     assert "Artifacts" in out
     assert "evaluate" in out.lower() and "artifacts_dir" in out
+    # The framework's evaluate call also threads artifacts_dir
+    assert "artifacts_dir=artifacts_dir," in out
     # Mentions train artifacts are opportunistic
     assert "opportunistic" in out.lower() or "discretion" in out.lower()
     # Old, contradictory signature must NOT appear
