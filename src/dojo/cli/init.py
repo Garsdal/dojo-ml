@@ -34,6 +34,7 @@ from dojo.core.domain import (
 )
 from dojo.core.task import TaskType
 from dojo.runtime.program_loader import default_program_template, write_program
+from dojo.runtime.setup_loader import default_setup_template, write_setup
 from dojo.runtime.task_service import TaskService
 from dojo.runtime.workspace_service import WorkspaceService
 
@@ -204,6 +205,16 @@ async def _init_async(
     await lab.domain_store.save(domain)
     console.print(f"[green]✓[/green] PROGRAM.md scaffolded at {program_path}")
 
+    # ---- 4b. SETUP.md scaffold (data + eval spec, read by `dojo task setup`) -
+    setup_path = write_setup(
+        domain,
+        default_setup_template(domain),
+        base_dir=Path(settings.storage.base_dir),
+    )
+    domain.setup_path = str(setup_path)
+    await lab.domain_store.save(domain)
+    console.print(f"[green]✓[/green] SETUP.md scaffolded at {setup_path}")
+
     # ---- 5. Set current_domain_id -------------------------------------------
     set_current_domain_id(Path(settings.storage.base_dir), domain.id)
 
@@ -211,14 +222,23 @@ async def _init_async(
     console.print()
     console.print("[bold green]ready[/bold green] — next steps:")
     console.print(
-        f"  1. edit [cyan]{program_path}[/cyan] — describe the dataset, target, "
+        f"  1. edit [cyan]{program_path}[/cyan] — research goal, target, "
         "and what success looks like"
     )
     console.print(
-        "  2. run [bold]dojo task setup[/bold] — generates `load_data` + "
-        "`evaluate` from your PROGRAM.md, verifies them, and freezes the task"
+        f"  2. edit [cyan]{setup_path}[/cyan] — describe the dataset and "
+        "evaluation (read once by `dojo task setup`)"
     )
-    console.print("  3. run [bold]dojo run[/bold] — start the agent")
+    console.print(
+        "  3. run [bold]dojo task setup[/bold] — generates `load_data` + "
+        "`evaluate` from SETUP.md, verifies them, and freezes the task"
+    )
+    console.print("  4. run [bold]dojo run[/bold] — start the agent")
+    console.print(
+        "\n[dim]artifacts: anything `evaluate()` saves is archived every run; "
+        "`train()` may save the model when worth comparing across experiments. "
+        "See README §Artifacts.[/dim]"
+    )
 
 
 def _build_task_config(
