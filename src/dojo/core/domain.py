@@ -122,3 +122,4 @@ class Domain:
     workspace: Workspace | None = None
     task: Task | None = None
     program_path: str | None = None
+    setup_path: str | None = None
